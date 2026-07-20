@@ -632,7 +632,7 @@ private fun ViewerControls(
                         .size(46.dp, 62.dp)
                         .border(
                             width = if (selected) 3.dp else 1.dp,
-                            color = if (selected) Color.White else Color(0x33FFFFFF),
+                            color = if (selected) Color(0xFF2979FF) else Color(0x33FFFFFF),
                         )
                         .clickable { onGoTo(index) },
                 )
