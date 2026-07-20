@@ -503,11 +503,14 @@ private fun InputRow(value: String, onValueChange: (String) -> Unit, onAdd: () -
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = value,
-            onValueChange = onValueChange,
+            onValueChange = { s -> onValueChange(s.filter { it.isDigit() }) },
             modifier = Modifier.weight(1f),
             singleLine = true,
             leadingIcon = { Text("JM", style = MaterialTheme.typography.titleMedium) },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Done,
+            ),
             keyboardActions = KeyboardActions(onDone = { onAdd() }),
         )
         Spacer(Modifier.width(8.dp))
