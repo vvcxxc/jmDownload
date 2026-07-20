@@ -1,0 +1,5 @@
+<resources>
+    <!-- Window theme only (status bar / background before Compose draws).
+         Actual UI theming is handled by Compose MaterialTheme. -->
+    <style name="Theme.JMDownloader" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
