@@ -109,6 +109,7 @@ fun JmApp(vm: TaskViewModel) {
     var selectionMode by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var showBatchDelete by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
 
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -158,6 +159,7 @@ fun JmApp(vm: TaskViewModel) {
                 TopAppBar(
                     title = { Text("JM 下载") },
                     actions = {
+                        TextButton(onClick = { showSettings = true }) { Text("设置") }
                         if (tasks.isNotEmpty()) {
                             TextButton(onClick = { selectionMode = true }) { Text("选择") }
                         }
@@ -173,12 +175,6 @@ fun JmApp(vm: TaskViewModel) {
                 .fillMaxSize()
                 .padding(12.dp)
         ) {
-            SaveFolderRow(
-                saveUri = saveUri,
-                onPick = { folderPicker.launch(null) },
-                onReset = { vm.clearSaveUri() },
-            )
-            Spacer(Modifier.height(10.dp))
             InputRow(
                 value = input,
                 onValueChange = { input = it },
@@ -226,7 +222,7 @@ fun JmApp(vm: TaskViewModel) {
     pendingDelete?.let { task ->
         DeleteDialog(
             task = task,
-            canDeleteFile = task.zipName != null && saveUri != null,
+            canDeleteFile = task.zipName != null,
             onDismiss = { pendingDelete = null },
             onTaskOnly = {
                 vm.remove(task.id)
@@ -236,6 +232,15 @@ fun JmApp(vm: TaskViewModel) {
                 vm.removeWithFile(task)
                 pendingDelete = null
             },
+        )
+    }
+
+    if (showSettings) {
+        SettingsDialog(
+            saveUri = saveUri,
+            onPick = { folderPicker.launch(null) },
+            onReset = { vm.clearSaveUri() },
+            onDismiss = { showSettings = false },
         )
     }
 
@@ -344,30 +349,37 @@ private fun BatchDeleteDialog(
 }
 
 @Composable
-private fun SaveFolderRow(saveUri: String?, onPick: () -> Unit, onReset: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
+private fun SettingsDialog(
+    saveUri: String?,
+    onPick: () -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("设置") },
+        text = {
+            Column {
                 Text("保存位置", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
                 Text(
                     saveUri?.let { prettyUri(it) } ?: "系统下载 / JMComic（默认）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (saveUri != null) {
+                        TextButton(onClick = onReset) { Text("恢复默认") }
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    Button(onClick = onPick) {
+                        Text(if (saveUri == null) "自定义目录" else "更改目录")
+                    }
+                }
             }
-            if (saveUri != null) {
-                TextButton(onClick = onReset) { Text("恢复默认") }
-            }
-            TextButton(onClick = onPick) { Text(if (saveUri == null) "自定义" else "更改") }
-        }
-    }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
 }
 
 @Composable
