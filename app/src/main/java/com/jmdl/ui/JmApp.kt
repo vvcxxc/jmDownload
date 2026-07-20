@@ -63,6 +63,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.documentfile.provider.DocumentFile
 import coil.compose.AsyncImage
 import com.jmdl.data.SettingsStore
+import com.jmdl.download.Storage
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.material3.Slider
 import kotlin.math.roundToInt
@@ -169,7 +172,11 @@ fun JmApp(vm: TaskViewModel) {
                 .fillMaxSize()
                 .padding(12.dp)
         ) {
-            SaveFolderRow(saveUri = saveUri, onPick = { folderPicker.launch(null) })
+            SaveFolderRow(
+                saveUri = saveUri,
+                onPick = { folderPicker.launch(null) },
+                onReset = { vm.clearSaveUri() },
+            )
             Spacer(Modifier.height(10.dp))
             InputRow(
                 value = input,
@@ -336,7 +343,7 @@ private fun BatchDeleteDialog(
 }
 
 @Composable
-private fun SaveFolderRow(saveUri: String?, onPick: () -> Unit) {
+private fun SaveFolderRow(saveUri: String?, onPick: () -> Unit, onReset: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Row(
             Modifier
@@ -347,14 +354,17 @@ private fun SaveFolderRow(saveUri: String?, onPick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("保存位置", style = MaterialTheme.typography.labelMedium)
                 Text(
-                    saveUri?.let { prettyUri(it) } ?: "未选择（下载前请先选择）",
+                    saveUri?.let { prettyUri(it) } ?: "系统下载 / JMComic（默认）",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            TextButton(onClick = onPick) { Text(if (saveUri == null) "选择" else "更改") }
+            if (saveUri != null) {
+                TextButton(onClick = onReset) { Text("恢复默认") }
+            }
+            TextButton(onClick = onPick) { Text(if (saveUri == null) "自定义" else "更改") }
         }
     }
 }
@@ -444,6 +454,7 @@ private fun TaskRow(
 private fun ViewerScreen(task: Task, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val settings = remember { SettingsStore(context) }
     var files by remember(task.id) { mutableStateOf<List<File>?>(null) }
     var error by remember(task.id) { mutableStateOf<String?>(null) }
 
@@ -465,9 +476,14 @@ private fun ViewerScreen(task: Task, onClose: () -> Unit) {
                     color = Color.White,
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                 )
-                list == null -> CircularProgressIndicator(
-                    Modifier.align(Alignment.Center), color = Color.White,
-                )
+                list == null -> Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator(color = Color.White)
+                    Spacer(Modifier.height(10.dp))
+                    Text("解压中…", color = Color.White)
+                }
                 list.isEmpty() -> Text(
                     "没有可显示的图片",
                     color = Color.White,
@@ -477,7 +493,7 @@ private fun ViewerScreen(task: Task, onClose: () -> Unit) {
                     val pager = rememberPagerState(pageCount = { list.size })
                     val colState = rememberLazyListState()
                     var controls by remember(task.id) { mutableStateOf(false) }
-                    var webtoon by remember(task.id) { mutableStateOf(false) }
+                    var webtoon by remember { mutableStateOf(settings.webtoonMode) }
                     val noRipple = remember { MutableInteractionSource() }
                     val toggle = Modifier.clickable(
                         interactionSource = noRipple, indication = null,
@@ -541,15 +557,15 @@ private fun ViewerScreen(task: Task, onClose: () -> Unit) {
                     // Bottom panel: 阅读方式 + 缩略图 + 滑动条
                     AnimatedVisibility(
                         visible = controls,
-                        enter = slideInVertically { it },
-                        exit = slideOutVertically { it },
+                        enter = slideInVertically(animationSpec = tween(160)) { it },
+                        exit = slideOutVertically(animationSpec = tween(160)) { it },
                         modifier = Modifier.align(Alignment.BottomCenter),
                     ) {
                         ViewerControls(
                             list = list,
                             currentIndex = currentIndex,
                             webtoon = webtoon,
-                            onModeChange = { webtoon = it },
+                            onModeChange = { webtoon = it; settings.webtoonMode = it },
                             onGoTo = { i ->
                                 scope.launch {
                                     if (webtoon) colState.scrollToItem(i) else pager.scrollToPage(i)
@@ -580,8 +596,10 @@ private fun ViewerControls(
 ) {
     val rowState = rememberLazyListState()
     LaunchedEffect(currentIndex) {
-        runCatching { rowState.animateScrollToItem(currentIndex.coerceAtLeast(0)) }
+        runCatching { rowState.scrollToItem(currentIndex.coerceAtLeast(0)) }
     }
+    var showJump by remember { mutableStateOf(false) }
+
     Column(
         Modifier
             .fillMaxWidth()
@@ -596,6 +614,8 @@ private fun ViewerControls(
             TextButton(onClick = { onModeChange(true) }) {
                 Text("条漫", color = if (webtoon) Color.White else Color(0x88FFFFFF))
             }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { showJump = true }) { Text("跳转", color = Color.White) }
         }
         LazyRow(
             state = rowState,
@@ -611,8 +631,8 @@ private fun ViewerControls(
                     modifier = Modifier
                         .size(46.dp, 62.dp)
                         .border(
-                            width = if (selected) 2.dp else 1.dp,
-                            color = if (selected) Color.White else Color(0x55FFFFFF),
+                            width = if (selected) 3.dp else 1.dp,
+                            color = if (selected) Color.White else Color(0x33FFFFFF),
                         )
                         .clickable { onGoTo(index) },
                 )
@@ -626,6 +646,33 @@ private fun ViewerControls(
             )
         }
     }
+
+    if (showJump) {
+        var jumpInput by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showJump = false },
+            title = { Text("跳转到第几页") },
+            text = {
+                OutlinedTextField(
+                    value = jumpInput,
+                    onValueChange = { s -> jumpInput = s.filter { it.isDigit() }.take(6) },
+                    singleLine = true,
+                    label = { Text("1 - ${list.size}") },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    jumpInput.toIntOrNull()?.let { onGoTo((it - 1).coerceIn(0, list.size - 1)) }
+                    showJump = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showJump = false }) { Text("取消") } },
+        )
+    }
 }
 
 private fun isImageName(name: String): Boolean {
@@ -636,19 +683,11 @@ private fun isImageName(name: String): Boolean {
 
 /** Extract image entries from the task's saved zip into cache, preserving zip order. */
 private fun extractForView(context: Context, task: Task): List<File> {
-    val treeUri = task.saveTreeUri ?: SettingsStore(context).saveTreeUri
-        ?: throw IllegalStateException("未选择保存目录")
-    val zipName = task.zipName ?: throw IllegalStateException("没有已保存的文件")
-    val tree = DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
-        ?: throw IllegalStateException("保存目录不可用")
-    val doc = tree.findFile(zipName) ?: throw IllegalStateException("找不到文件：$zipName")
-
     val outDir = File(context.cacheDir, "view/${task.id}")
     File(context.cacheDir, "view").deleteRecursively()
     outDir.mkdirs()
 
-    val ins = context.contentResolver.openInputStream(doc.uri)
-        ?: throw IllegalStateException("无法读取文件")
+    val ins = Storage.openInput(context, task)
     var idx = 0
     ins.use { input ->
         ZipInputStream(input.buffered()).use { zis ->

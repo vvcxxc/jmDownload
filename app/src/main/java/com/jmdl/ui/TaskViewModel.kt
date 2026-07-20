@@ -11,6 +11,7 @@ import com.jmdl.data.Task
 import com.jmdl.data.TaskRepository
 import com.jmdl.data.TaskStatus
 import com.jmdl.download.DownloadService
+import com.jmdl.download.Storage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +40,12 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         _saveUri.value = s
     }
 
+    /** Back to the picker-free default (system Downloads/JMComic). */
+    fun clearSaveUri() {
+        settings.saveTreeUri = null
+        _saveUri.value = null
+    }
+
     /** Parses [input] and enqueues a task. Returns an error message on failure, else null. */
     fun addTask(input: String): String? {
         val id = JmIdParser.parse(input)
@@ -63,18 +70,10 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     /** Removes only the task record; the saved zip in the folder is kept. */
     fun remove(taskId: String) = repo.remove(taskId)
 
-    /** Removes the task record AND deletes its saved zip from the save folder. */
+    /** Removes the task record AND deletes its saved zip. */
     fun removeWithFile(task: Task) {
-        val zip = task.zipName
-        val treeUri = task.saveTreeUri ?: settings.saveTreeUri
         viewModelScope.launch(Dispatchers.IO) {
-            if (zip != null && treeUri != null) {
-                runCatching {
-                    DocumentFile.fromTreeUri(getApplication(), Uri.parse(treeUri))
-                        ?.findFile(zip)
-                        ?.delete()
-                }
-            }
+            Storage.deleteFile(getApplication(), task)
             repo.remove(task.id)
         }
     }
@@ -88,14 +87,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         val targets = repo.tasks.value.filter { it.id in ids }
         viewModelScope.launch(Dispatchers.IO) {
             for (t in targets) {
-                val zip = t.zipName
-                val treeUri = t.saveTreeUri ?: settings.saveTreeUri
-                if (zip != null && treeUri != null) {
-                    runCatching {
-                        DocumentFile.fromTreeUri(getApplication(), Uri.parse(treeUri))
-                            ?.findFile(zip)?.delete()
-                    }
-                }
+                Storage.deleteFile(getApplication(), t)
                 repo.remove(t.id)
             }
         }
@@ -110,21 +102,19 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             val destDir = DocumentFile.fromTreeUri(app, dest) ?: return@launch
             val cr = app.contentResolver
             for (t in targets) {
-                val zip = t.zipName ?: continue
-                val srcTreeStr = t.saveTreeUri ?: settings.saveTreeUri ?: continue
-                if (srcTreeStr == destStr) continue // already in destination
+                val name = t.zipName ?: continue
+                if (t.saveTreeUri == destStr) continue // already in destination
                 runCatching {
-                    val srcTree = DocumentFile.fromTreeUri(app, Uri.parse(srcTreeStr))
-                        ?: return@runCatching
-                    val srcFile = srcTree.findFile(zip) ?: return@runCatching
-                    val finalName = uniqueDocName(destDir, zip)
+                    val finalName = uniqueDocName(destDir, name)
                     val newDoc = destDir.createFile("application/zip", finalName)
                         ?: return@runCatching
-                    cr.openInputStream(srcFile.uri)?.use { inp ->
+                    Storage.openInput(app, t).use { inp ->
                         cr.openOutputStream(newDoc.uri)?.use { out -> inp.copyTo(out) }
                     }
-                    srcFile.delete()
-                    repo.update(t.id) { it.copy(saveTreeUri = destStr, zipName = finalName) }
+                    Storage.deleteFile(app, t)
+                    repo.update(t.id) {
+                        it.copy(saveTreeUri = destStr, fileUri = newDoc.uri.toString(), zipName = finalName)
+                    }
                 }
             }
         }

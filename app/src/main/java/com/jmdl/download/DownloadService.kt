@@ -65,12 +65,6 @@ class DownloadService : Service() {
 
         repo.update(taskId) { it.copy(status = TaskStatus.RUNNING, done = 0, total = 0, message = null) }
 
-        val treeUriStr = settings.saveTreeUri
-        if (treeUriStr == null) {
-            repo.update(taskId) { it.copy(status = TaskStatus.FAILED, message = "未选择保存目录") }
-            return
-        }
-
         try {
             val title = JmEngine.getTitle(jmId)
             repo.update(taskId) { it.copy(title = title) }
@@ -97,14 +91,16 @@ class DownloadService : Service() {
             repo.update(taskId) { it.copy(status = TaskStatus.ZIPPING) }
             updateNotif(title, "打包中…", 0, 0, indeterminate = true)
             val zipName = FilenameSanitizer.zipName(jmId, title)
-            val finalName = Zipper.zipToTree(this, workDir, Uri.parse(treeUriStr), zipName)
+            val treeUriStr = settings.saveTreeUri
+            val saved = Storage.saveZip(this, workDir, zipName, treeUriStr)
 
             val note = if (outcome.failed > 0) "完成（${outcome.failed} 张失败）" else "完成"
             repo.update(taskId) {
                 it.copy(
                     status = TaskStatus.DONE,
-                    zipName = finalName,
+                    zipName = saved.name,
                     saveTreeUri = treeUriStr,
+                    fileUri = saved.fileUri,
                     message = note,
                 )
             }

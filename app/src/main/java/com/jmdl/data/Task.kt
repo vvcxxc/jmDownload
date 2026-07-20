@@ -11,6 +11,7 @@ data class Task(
     val total: Int = 0,          // total images (0 = unknown yet)
     val message: String? = null,  // error text / completion note
     val zipName: String? = null,  // final zip file name once saved
-    val saveTreeUri: String? = null, // SAF folder this task's zip was saved to
+    val saveTreeUri: String? = null, // SAF folder this task's zip was saved to (null = default Downloads)
+    val fileUri: String? = null,  // content Uri of the saved zip (MediaStore or SAF document)
     val createdAt: Long = 0L,
 )
