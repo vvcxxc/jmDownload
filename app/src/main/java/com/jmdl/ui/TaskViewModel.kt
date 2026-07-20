@@ -29,6 +29,11 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val _saveUri = MutableStateFlow(settings.saveTreeUri)
     val saveUri: StateFlow<String?> = _saveUri.asStateFlow()
 
+    data class Background(val color: Int?, val imageUri: String?)
+
+    private val _background = MutableStateFlow(Background(settings.bgColor, settings.bgImageUri))
+    val background: StateFlow<Background> = _background.asStateFlow()
+
     init {
         // Resume any tasks left queued from a previous run.
         if (repo.hasPending()) DownloadService.start(app)
@@ -44,6 +49,25 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     fun clearSaveUri() {
         settings.saveTreeUri = null
         _saveUri.value = null
+    }
+
+    fun setBgColor(argb: Int) {
+        settings.bgColor = argb
+        settings.bgImageUri = null
+        _background.value = Background(argb, null)
+    }
+
+    fun setBgImage(uri: Uri) {
+        val s = uri.toString()
+        settings.bgImageUri = s
+        settings.bgColor = null
+        _background.value = Background(null, s)
+    }
+
+    fun clearBg() {
+        settings.bgColor = null
+        settings.bgImageUri = null
+        _background.value = Background(null, null)
     }
 
     /** Parses [input] and enqueues a task. Returns an error message on failure, else null. */

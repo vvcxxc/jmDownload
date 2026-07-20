@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
@@ -110,6 +111,8 @@ fun JmApp(vm: TaskViewModel) {
     var selected by remember { mutableStateOf(setOf<String>()) }
     var showBatchDelete by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showBackground by remember { mutableStateOf(false) }
+    val bg by vm.background.collectAsStateWithLifecycle()
 
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -131,9 +134,38 @@ fun JmApp(vm: TaskViewModel) {
         selectionMode = false
         selected = emptySet()
     }
+    val bgImagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            vm.setBgImage(uri)
+        }
+    }
 
-    Scaffold(
-        topBar = {
+    val bgImage = bg.imageUri
+    val bgColor = bg.color
+    Box(Modifier.fillMaxSize()) {
+        if (bgImage != null) {
+            AsyncImage(
+                model = Uri.parse(bgImage),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else if (bgColor != null) {
+            Box(Modifier.fillMaxSize().background(Color(bgColor)))
+        }
+        Scaffold(
+            containerColor = if (bgImage != null || bgColor != null)
+                Color.Transparent
+            else
+                MaterialTheme.colorScheme.background,
+            topBar = {
             if (selectionMode) {
                 TopAppBar(
                     title = { Text("已选 ${selected.size}") },
@@ -218,6 +250,7 @@ fun JmApp(vm: TaskViewModel) {
             }
         }
     }
+    }
 
     pendingDelete?.let { task ->
         DeleteDialog(
@@ -240,7 +273,18 @@ fun JmApp(vm: TaskViewModel) {
             saveUri = saveUri,
             onPick = { folderPicker.launch(null) },
             onReset = { vm.clearSaveUri() },
+            onOpenBackground = { showBackground = true },
             onDismiss = { showSettings = false },
+        )
+    }
+
+    if (showBackground) {
+        BackgroundDialog(
+            initialColor = bg.color,
+            onPickImage = { bgImagePicker.launch(arrayOf("image/*")) },
+            onColor = { vm.setBgColor(it) },
+            onReset = { vm.clearBg() },
+            onDismiss = { showBackground = false },
         )
     }
 
@@ -353,6 +397,7 @@ private fun SettingsDialog(
     saveUri: String?,
     onPick: () -> Unit,
     onReset: () -> Unit,
+    onOpenBackground: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -376,10 +421,70 @@ private fun SettingsDialog(
                         Text(if (saveUri == null) "自定义目录" else "更改目录")
                     }
                 }
+                Spacer(Modifier.height(16.dp))
+                Text("主页背景", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                Button(onClick = onOpenBackground) { Text("自定义背景（颜色 / 图片）") }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
+}
+
+@Composable
+private fun BackgroundDialog(
+    initialColor: Int?,
+    onPickImage: () -> Unit,
+    onColor: (Int) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val start = initialColor ?: 0xFF888888.toInt()
+    var r by remember { mutableStateOf((start shr 16) and 0xFF) }
+    var g by remember { mutableStateOf((start shr 8) and 0xFF) }
+    var b by remember { mutableStateOf(start and 0xFF) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("主页背景") },
+        text = {
+            Column {
+                Text("背景颜色", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(32.dp)
+                        .background(Color(r, g, b))
+                )
+                ColorSlider("R", r) { r = it }
+                ColorSlider("G", g) { g = it }
+                ColorSlider("B", b) { b = it }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { onColor(Color(r, g, b).toArgb()) }) { Text("用此颜色") }
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(onClick = onPickImage) { Text("选图片") }
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(onClick = onReset) { Text("恢复默认") }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
+
+@Composable
+private fun ColorSlider(label: String, value: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.width(18.dp))
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = 0f..255f,
+            modifier = Modifier.weight(1f),
+        )
+        Text(value.toString(), modifier = Modifier.width(36.dp))
+    }
 }
 
 @Composable
