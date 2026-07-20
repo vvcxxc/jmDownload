@@ -80,6 +80,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.Checkbox
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -99,6 +102,9 @@ fun JmApp(vm: TaskViewModel) {
         tasks.sortedByDescending { it.createdAt } // newest added on top
     }
     var viewing by remember { mutableStateOf<Task?>(null) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var showBatchDelete by remember { mutableStateOf(false) }
 
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -109,9 +115,52 @@ fun JmApp(vm: TaskViewModel) {
             vm.setSaveUri(uri)
         }
     }
+    val moveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
+            vm.moveTasks(selected, uri)
+        }
+        selectionMode = false
+        selected = emptySet()
+    }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("JM 下载") }) },
+        topBar = {
+            if (selectionMode) {
+                TopAppBar(
+                    title = { Text("已选 ${selected.size}") },
+                    navigationIcon = {
+                        TextButton(onClick = { selectionMode = false; selected = emptySet() }) {
+                            Text("取消")
+                        }
+                    },
+                    actions = {
+                        TextButton(onClick = {
+                            selected = if (selected.size == ordered.size) emptySet()
+                            else ordered.map { it.id }.toSet()
+                        }) { Text("全选") }
+                        TextButton(onClick = { if (selected.isNotEmpty()) moveLauncher.launch(null) }) {
+                            Text("移动")
+                        }
+                        TextButton(onClick = { if (selected.isNotEmpty()) showBatchDelete = true }) {
+                            Text("删除")
+                        }
+                    },
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("JM 下载") },
+                    actions = {
+                        if (tasks.isNotEmpty()) {
+                            TextButton(onClick = { selectionMode = true }) { Text("选择") }
+                        }
+                    },
+                )
+            }
+        },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(
@@ -146,8 +195,17 @@ fun JmApp(vm: TaskViewModel) {
                 ) {
                     items(ordered, key = { it.id }) { t ->
                         TaskRow(
-                            t,
+                            t = t,
+                            selectionMode = selectionMode,
+                            selected = t.id in selected,
                             onOpen = { if (t.status == TaskStatus.DONE && t.zipName != null) viewing = t },
+                            onToggleSelect = {
+                                selected = if (t.id in selected) selected - t.id else selected + t.id
+                            },
+                            onEnterSelect = {
+                                selectionMode = true
+                                selected = selected + t.id
+                            },
                             onRetry = { vm.retry(t.id) },
                             onRemove = { pendingDelete = t },
                         )
@@ -169,6 +227,27 @@ fun JmApp(vm: TaskViewModel) {
             onWithFile = {
                 vm.removeWithFile(task)
                 pendingDelete = null
+            },
+        )
+    }
+
+    if (showBatchDelete) {
+        val anyFile = tasks.any { it.id in selected && it.zipName != null }
+        BatchDeleteDialog(
+            count = selected.size,
+            canDeleteFile = anyFile,
+            onDismiss = { showBatchDelete = false },
+            onTaskOnly = {
+                vm.removeTasks(selected, false)
+                showBatchDelete = false
+                selectionMode = false
+                selected = emptySet()
+            },
+            onWithFile = {
+                vm.removeTasks(selected, true)
+                showBatchDelete = false
+                selectionMode = false
+                selected = emptySet()
             },
         )
     }
@@ -219,6 +298,44 @@ private fun DeleteDialog(
 }
 
 @Composable
+private fun BatchDeleteDialog(
+    count: Int,
+    canDeleteFile: Boolean,
+    onDismiss: () -> Unit,
+    onTaskOnly: () -> Unit,
+    onWithFile: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("删除选中的 $count 项") },
+        text = {
+            Text(
+                if (canDeleteFile)
+                    "“只删任务”仅从列表移除，保留已保存的 zip；\n“连文件一起删”会把这些任务的 zip 一并删掉（不可恢复）。"
+                else
+                    "从列表中删除选中的 $count 项？"
+            )
+        },
+        confirmButton = {
+            if (canDeleteFile) {
+                Row {
+                    TextButton(onClick = onTaskOnly) { Text("只删任务") }
+                    TextButton(
+                        onClick = onWithFile,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                    ) { Text("连文件一起删") }
+                }
+            } else {
+                TextButton(onClick = onTaskOnly) { Text("删除") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
 private fun SaveFolderRow(saveUri: String?, onPick: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Row(
@@ -259,16 +376,33 @@ private fun InputRow(value: String, onValueChange: (String) -> Unit, onAdd: () -
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TaskRow(t: Task, onOpen: () -> Unit, onRetry: () -> Unit, onRemove: () -> Unit) {
+private fun TaskRow(
+    t: Task,
+    selectionMode: Boolean,
+    selected: Boolean,
+    onOpen: () -> Unit,
+    onToggleSelect: () -> Unit,
+    onEnterSelect: () -> Unit,
+    onRetry: () -> Unit,
+    onRemove: () -> Unit,
+) {
     val openable = t.status == TaskStatus.DONE && t.zipName != null
     Card(
         Modifier
             .fillMaxWidth()
-            .clickable(enabled = openable, onClick = onOpen)
+            .combinedClickable(
+                onClick = { if (selectionMode) onToggleSelect() else if (openable) onOpen() },
+                onLongClick = { if (!selectionMode) onEnterSelect() },
+            )
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (selectionMode) {
+                    Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
+                    Spacer(Modifier.width(4.dp))
+                }
                 Column(Modifier.weight(1f)) {
                     Text(
                         "JM${t.jmId}" + (t.title?.let { " · $it" } ?: ""),
@@ -282,10 +416,12 @@ private fun TaskRow(t: Task, onOpen: () -> Unit, onRetry: () -> Unit, onRemove: 
                         color = statusColor(t),
                     )
                 }
-                if (t.status == TaskStatus.FAILED) {
-                    TextButton(onClick = onRetry) { Text("重试") }
+                if (!selectionMode) {
+                    if (t.status == TaskStatus.FAILED) {
+                        TextButton(onClick = onRetry) { Text("重试") }
+                    }
+                    TextButton(onClick = onRemove) { Text("删除") }
                 }
-                TextButton(onClick = onRemove) { Text("删除") }
             }
             when {
                 t.status == TaskStatus.RUNNING && t.total > 0 -> {

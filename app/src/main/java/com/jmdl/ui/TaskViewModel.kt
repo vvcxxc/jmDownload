@@ -78,4 +78,65 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             repo.remove(task.id)
         }
     }
+
+    /** Batch remove. If [deleteFiles], also delete each task's saved zip. */
+    fun removeTasks(ids: Set<String>, deleteFiles: Boolean) {
+        if (!deleteFiles) {
+            ids.forEach { repo.remove(it) }
+            return
+        }
+        val targets = repo.tasks.value.filter { it.id in ids }
+        viewModelScope.launch(Dispatchers.IO) {
+            for (t in targets) {
+                val zip = t.zipName
+                val treeUri = t.saveTreeUri ?: settings.saveTreeUri
+                if (zip != null && treeUri != null) {
+                    runCatching {
+                        DocumentFile.fromTreeUri(getApplication(), Uri.parse(treeUri))
+                            ?.findFile(zip)?.delete()
+                    }
+                }
+                repo.remove(t.id)
+            }
+        }
+    }
+
+    /** Move each selected task's zip into [dest], updating its saved-location + name. */
+    fun moveTasks(ids: Set<String>, dest: Uri) {
+        val targets = repo.tasks.value.filter { it.id in ids && it.zipName != null }
+        val destStr = dest.toString()
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val destDir = DocumentFile.fromTreeUri(app, dest) ?: return@launch
+            val cr = app.contentResolver
+            for (t in targets) {
+                val zip = t.zipName ?: continue
+                val srcTreeStr = t.saveTreeUri ?: settings.saveTreeUri ?: continue
+                if (srcTreeStr == destStr) continue // already in destination
+                runCatching {
+                    val srcTree = DocumentFile.fromTreeUri(app, Uri.parse(srcTreeStr))
+                        ?: return@runCatching
+                    val srcFile = srcTree.findFile(zip) ?: return@runCatching
+                    val finalName = uniqueDocName(destDir, zip)
+                    val newDoc = destDir.createFile("application/zip", finalName)
+                        ?: return@runCatching
+                    cr.openInputStream(srcFile.uri)?.use { inp ->
+                        cr.openOutputStream(newDoc.uri)?.use { out -> inp.copyTo(out) }
+                    }
+                    srcFile.delete()
+                    repo.update(t.id) { it.copy(saveTreeUri = destStr, zipName = finalName) }
+                }
+            }
+        }
+    }
+
+    private fun uniqueDocName(dir: DocumentFile, name: String): String {
+        if (dir.findFile(name) == null) return name
+        val dot = name.lastIndexOf('.')
+        val base = if (dot >= 0) name.substring(0, dot) else name
+        val ext = if (dot >= 0) name.substring(dot) else ""
+        var i = 1
+        while (dir.findFile("$base ($i)$ext") != null) i++
+        return "$base ($i)$ext"
+    }
 }
