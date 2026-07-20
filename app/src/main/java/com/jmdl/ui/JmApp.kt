@@ -63,6 +63,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.documentfile.provider.DocumentFile
 import coil.compose.AsyncImage
 import com.jmdl.data.SettingsStore
+import androidx.compose.foundation.background
+import androidx.compose.material3.Slider
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -290,6 +293,7 @@ private fun TaskRow(t: Task, onOpen: () -> Unit, onRetry: () -> Unit, onRemove: 
 @Composable
 private fun ViewerScreen(task: Task, onClose: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var files by remember(task.id) { mutableStateOf<List<File>?>(null) }
     var error by remember(task.id) { mutableStateOf<String?>(null) }
 
@@ -329,12 +333,28 @@ private fun ViewerScreen(task: Task, onClose: () -> Unit) {
                             contentScale = ContentScale.Fit,
                         )
                     }
-                    Text(
-                        "${pager.currentPage + 1}/${list.size}",
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
-                    )
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .background(Color(0x99000000))
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            "${pager.currentPage + 1} / ${list.size}",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (list.size > 1) {
+                            Slider(
+                                value = pager.currentPage.toFloat(),
+                                onValueChange = { v ->
+                                    scope.launch { pager.scrollToPage(v.roundToInt()) }
+                                },
+                                valueRange = 0f..(list.size - 1).toFloat(),
+                            )
+                        }
+                    }
                 }
             }
             TextButton(
