@@ -101,6 +101,7 @@ class DownloadService : Service() {
                     zipName = saved.name,
                     saveTreeUri = treeUriStr,
                     fileUri = saved.fileUri,
+                    failed = outcome.failed,
                     message = note,
                 )
             }

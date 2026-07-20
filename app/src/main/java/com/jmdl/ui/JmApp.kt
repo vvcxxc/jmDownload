@@ -556,7 +556,7 @@ private fun TaskRow(
                     )
                 }
                 if (!selectionMode) {
-                    if (t.status == TaskStatus.FAILED) {
+                    if (t.status == TaskStatus.FAILED || (t.status == TaskStatus.DONE && t.failed > 0)) {
                         TextButton(onClick = onRetry) { Text("重试") }
                     }
                     TextButton(onClick = onRemove) { Text("删除") }

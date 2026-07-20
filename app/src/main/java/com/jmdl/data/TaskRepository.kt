@@ -39,6 +39,7 @@ class TaskRepository private constructor(private val file: File) {
                             .getOrDefault(TaskStatus.QUEUED),
                         done = o.optInt("done"),
                         total = o.optInt("total"),
+                        failed = o.optInt("failed"),
                         message = o.optString("message").ifEmpty { null },
                         zipName = o.optString("zipName").ifEmpty { null },
                         saveTreeUri = o.optString("saveTreeUri").ifEmpty { null },
@@ -70,6 +71,7 @@ class TaskRepository private constructor(private val file: File) {
                         put("status", t.status.name)
                         put("done", t.done)
                         put("total", t.total)
+                        put("failed", t.failed)
                         put("message", t.message ?: "")
                         put("zipName", t.zipName ?: "")
                         put("saveTreeUri", t.saveTreeUri ?: "")

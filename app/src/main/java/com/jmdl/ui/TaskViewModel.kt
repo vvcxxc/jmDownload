@@ -87,7 +87,19 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun retry(taskId: String) {
-        repo.update(taskId) { it.copy(status = TaskStatus.QUEUED, done = 0, total = 0, message = null) }
+        // If it already produced a file (完成但有失败), remove it so the retry replaces it.
+        repo.byId(taskId)?.let { t ->
+            if (t.fileUri != null || t.zipName != null) {
+                viewModelScope.launch(Dispatchers.IO) { Storage.deleteFile(getApplication(), t) }
+            }
+        }
+        repo.update(taskId) {
+            it.copy(
+                status = TaskStatus.QUEUED,
+                done = 0, total = 0, failed = 0,
+                message = null, zipName = null, fileUri = null,
+            )
+        }
         DownloadService.start(getApplication())
     }
 

@@ -9,6 +9,7 @@ data class Task(
     val status: TaskStatus = TaskStatus.QUEUED,
     val done: Int = 0,            // images downloaded so far
     val total: Int = 0,          // total images (0 = unknown yet)
+    val failed: Int = 0,         // images that failed (DONE with failed>0 = partial)
     val message: String? = null,  // error text / completion note
     val zipName: String? = null,  // final zip file name once saved
     val saveTreeUri: String? = null, // SAF folder this task's zip was saved to (null = default Downloads)
