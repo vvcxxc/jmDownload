@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -595,8 +596,14 @@ private fun ViewerControls(
     onGoTo: (Int) -> Unit,
 ) {
     val rowState = rememberLazyListState()
+    val thumbPx = with(LocalDensity.current) { 46.dp.toPx() }.toInt()
     LaunchedEffect(currentIndex) {
-        runCatching { rowState.scrollToItem(currentIndex.coerceAtLeast(0)) }
+        val i = currentIndex.coerceAtLeast(0)
+        val li = rowState.layoutInfo
+        val viewport = li.viewportEndOffset - li.viewportStartOffset
+        // Center the current thumbnail; head/tail clamp automatically.
+        val pad = ((viewport - thumbPx) / 2).coerceAtLeast(0)
+        runCatching { rowState.scrollToItem(i, -pad) }
     }
     var showJump by remember { mutableStateOf(false) }
 
