@@ -74,7 +74,13 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     fun addTask(input: String): String? {
         val id = JmIdParser.parse(input)
             ?: return "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
-        if (repo.tasks.value.any { it.jmId == id }) {
+        val existing = repo.tasks.value.firstOrNull { it.jmId == id }
+        if (existing != null) {
+            // A failed task doesn't count as "existing" — re-adding retries it (bumped to top).
+            if (existing.status == TaskStatus.FAILED) {
+                retry(existing.id)
+                return null
+            }
             return "JM$id 已在列表中"
         }
         repo.add(
@@ -101,6 +107,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 status = TaskStatus.QUEUED,
                 done = 0, total = 0, failed = 0,
                 message = null, zipName = null, fileUri = null,
+                createdAt = System.currentTimeMillis(), // count as new → moves to the top
             )
         }
         DownloadService.start(getApplication())
