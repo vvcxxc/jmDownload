@@ -69,6 +69,9 @@ import com.jmdl.download.Storage
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import kotlin.math.roundToInt
 import androidx.compose.animation.AnimatedVisibility
@@ -207,23 +210,28 @@ fun JmApp(vm: TaskViewModel) {
                 .fillMaxSize()
                 .padding(12.dp)
         ) {
-            InputRow(
-                value = input,
-                onValueChange = { input = it },
-                onAdd = {
-                    val err = vm.addTask(input)
-                    if (err == null) input = "" else scope.launch { snackbar.showSnackbar(err) }
-                },
-            )
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider()
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(8.dp)) {
+                    InputRow(
+                        value = input,
+                        onValueChange = { input = it },
+                        onAdd = {
+                            val err = vm.addTask(input)
+                            if (err == null) input = "" else scope.launch { snackbar.showSnackbar(err) }
+                        },
+                    )
+                }
+            }
             Spacer(Modifier.height(12.dp))
             if (tasks.isEmpty()) {
-                Text(
-                    "还没有任务。输入车号点“添加”，会先记录到列表再逐个下载。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Card(Modifier.fillMaxWidth()) {
+                    Text(
+                        "还没有任务。输入车号点“添加”，会先记录到列表再逐个下载。",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else {
                 LazyColumn(
                     Modifier.fillMaxSize(),
@@ -280,7 +288,6 @@ fun JmApp(vm: TaskViewModel) {
 
     if (showBackground) {
         BackgroundDialog(
-            initialColor = bg.color,
             onPickImage = { bgImagePicker.launch(arrayOf("image/*")) },
             onColor = { vm.setBgColor(it) },
             onReset = { vm.clearBg() },
@@ -431,60 +438,52 @@ private fun SettingsDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BackgroundDialog(
-    initialColor: Int?,
     onPickImage: () -> Unit,
     onColor: (Int) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val start = initialColor ?: 0xFF888888.toInt()
-    var r by remember { mutableStateOf((start shr 16) and 0xFF) }
-    var g by remember { mutableStateOf((start shr 8) and 0xFF) }
-    var b by remember { mutableStateOf(start and 0xFF) }
+    val swatches = listOf(
+        Color.White, Color(0xFFF2F2F2), Color(0xFFDDDDDD), Color(0xFF9E9E9E),
+        Color(0xFF555555), Color.Black,
+        Color(0xFFFFCDD2), Color(0xFFF8BBD0), Color(0xFFE1BEE7), Color(0xFFD1C4E9),
+        Color(0xFFBBDEFB), Color(0xFFB3E5FC), Color(0xFFB2DFDB), Color(0xFFC8E6C9),
+        Color(0xFFFFF9C4), Color(0xFFFFE0B2),
+    )
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("主页背景") },
         text = {
             Column {
                 Text("背景颜色", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(6.dp))
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(32.dp)
-                        .background(Color(r, g, b))
-                )
-                ColorSlider("R", r) { r = it }
-                ColorSlider("G", g) { g = it }
-                ColorSlider("B", b) { b = it }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    swatches.forEach { c ->
+                        Box(
+                            Modifier
+                                .size(40.dp)
+                                .background(c, RoundedCornerShape(6.dp))
+                                .border(1.dp, Color(0x33000000), RoundedCornerShape(6.dp))
+                                .clickable { onColor(c.toArgb()) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { onColor(Color(r, g, b).toArgb()) }) { Text("用此颜色") }
-                    Spacer(Modifier.width(6.dp))
-                    TextButton(onClick = onPickImage) { Text("选图片") }
-                    Spacer(Modifier.width(6.dp))
+                    Button(onClick = onPickImage) { Text("选图片") }
+                    Spacer(Modifier.width(8.dp))
                     TextButton(onClick = onReset) { Text("恢复默认") }
                 }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
-}
-
-@Composable
-private fun ColorSlider(label: String, value: Int, onChange: (Int) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.width(18.dp))
-        Slider(
-            value = value.toFloat(),
-            onValueChange = { onChange(it.roundToInt()) },
-            valueRange = 0f..255f,
-            modifier = Modifier.weight(1f),
-        )
-        Text(value.toString(), modifier = Modifier.width(36.dp))
-    }
 }
 
 @Composable
