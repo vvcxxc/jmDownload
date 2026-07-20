@@ -2,16 +2,20 @@ package com.jmdl.ui
 
 import android.app.Application
 import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.jmdl.core.JmIdParser
 import com.jmdl.data.SettingsStore
 import com.jmdl.data.Task
 import com.jmdl.data.TaskRepository
 import com.jmdl.data.TaskStatus
 import com.jmdl.download.DownloadService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 class TaskViewModel(app: Application) : AndroidViewModel(app) {
@@ -56,5 +60,22 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         DownloadService.start(getApplication())
     }
 
+    /** Removes only the task record; the saved zip in the folder is kept. */
     fun remove(taskId: String) = repo.remove(taskId)
+
+    /** Removes the task record AND deletes its saved zip from the save folder. */
+    fun removeWithFile(task: Task) {
+        val zip = task.zipName
+        val treeUri = settings.saveTreeUri
+        viewModelScope.launch(Dispatchers.IO) {
+            if (zip != null && treeUri != null) {
+                runCatching {
+                    DocumentFile.fromTreeUri(getApplication(), Uri.parse(treeUri))
+                        ?.findFile(zip)
+                        ?.delete()
+                }
+            }
+            repo.remove(task.id)
+        }
+    }
 }

@@ -74,6 +74,9 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // In-app image viewer (async loading + sampling; loads File/webp/jpg/png).
+    implementation("io.coil-kt:coil-compose:2.7.0")
+
     // JMComic engine (API client + Android Bitmap descrambler). Pulls core + api
     // + okhttp + gson + jsoup + commons-lang3 + slf4j transitively.
     implementation("io.github.jukomu:jmcomic-android-support:1.1.7") {
