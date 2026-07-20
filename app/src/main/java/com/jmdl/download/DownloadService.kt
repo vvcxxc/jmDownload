@@ -101,7 +101,12 @@ class DownloadService : Service() {
 
             val note = if (outcome.failed > 0) "完成（${outcome.failed} 张失败）" else "完成"
             repo.update(taskId) {
-                it.copy(status = TaskStatus.DONE, zipName = finalName, message = note)
+                it.copy(
+                    status = TaskStatus.DONE,
+                    zipName = finalName,
+                    saveTreeUri = treeUriStr,
+                    message = note,
+                )
             }
         } catch (e: Exception) {
             repo.update(taskId) {

@@ -66,7 +66,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     /** Removes the task record AND deletes its saved zip from the save folder. */
     fun removeWithFile(task: Task) {
         val zip = task.zipName
-        val treeUri = settings.saveTreeUri
+        val treeUri = task.saveTreeUri ?: settings.saveTreeUri
         viewModelScope.launch(Dispatchers.IO) {
             if (zip != null && treeUri != null) {
                 runCatching {

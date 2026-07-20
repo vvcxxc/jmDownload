@@ -41,6 +41,7 @@ class TaskRepository private constructor(private val file: File) {
                         total = o.optInt("total"),
                         message = o.optString("message").ifEmpty { null },
                         zipName = o.optString("zipName").ifEmpty { null },
+                        saveTreeUri = o.optString("saveTreeUri").ifEmpty { null },
                         createdAt = o.optLong("createdAt"),
                     )
                 )
@@ -70,6 +71,7 @@ class TaskRepository private constructor(private val file: File) {
                         put("total", t.total)
                         put("message", t.message ?: "")
                         put("zipName", t.zipName ?: "")
+                        put("saveTreeUri", t.saveTreeUri ?: "")
                         put("createdAt", t.createdAt)
                     }
                 )

@@ -66,6 +66,20 @@ import com.jmdl.data.SettingsStore
 import androidx.compose.foundation.background
 import androidx.compose.material3.Slider
 import kotlin.math.roundToInt
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -325,42 +339,155 @@ private fun ViewerScreen(task: Task, onClose: () -> Unit) {
                 )
                 else -> {
                     val pager = rememberPagerState(pageCount = { list.size })
-                    HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
-                        AsyncImage(
-                            model = list[page],
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                        )
+                    val colState = rememberLazyListState()
+                    var controls by remember(task.id) { mutableStateOf(false) }
+                    var webtoon by remember(task.id) { mutableStateOf(false) }
+                    val noRipple = remember { MutableInteractionSource() }
+                    val toggle = Modifier.clickable(
+                        interactionSource = noRipple, indication = null,
+                    ) { controls = !controls }
+
+                    // keep the two reading modes in sync on switch
+                    LaunchedEffect(webtoon) {
+                        if (webtoon) colState.scrollToItem(pager.currentPage)
+                        else pager.scrollToPage(colState.firstVisibleItemIndex)
                     }
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .background(Color(0x99000000))
-                            .padding(horizontal = 16.dp, vertical = 6.dp),
-                    ) {
-                        Text(
-                            "${pager.currentPage + 1} / ${list.size}",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        if (list.size > 1) {
-                            Slider(
-                                value = pager.currentPage.toFloat(),
-                                onValueChange = { v ->
-                                    scope.launch { pager.scrollToPage(v.roundToInt()) }
-                                },
-                                valueRange = 0f..(list.size - 1).toFloat(),
+
+                    if (webtoon) {
+                        LazyColumn(state = colState, modifier = Modifier.fillMaxSize()) {
+                            items(list) { file ->
+                                AsyncImage(
+                                    model = file,
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxWidth().then(toggle),
+                                    contentScale = ContentScale.FillWidth,
+                                )
+                            }
+                        }
+                    } else {
+                        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+                            AsyncImage(
+                                model = list[page],
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize().then(toggle),
+                                contentScale = ContentScale.Fit,
                             )
                         }
                     }
+
+                    val currentIndex =
+                        if (webtoon) colState.firstVisibleItemIndex else pager.currentPage
+
+                    // Top bar: 关闭 + 页码
+                    AnimatedVisibility(
+                        visible = controls,
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xCC000000))
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(onClick = onClose) { Text("关闭", color = Color.White) }
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                "${currentIndex + 1} / ${list.size}",
+                                color = Color.White,
+                                modifier = Modifier.padding(end = 12.dp),
+                            )
+                        }
+                    }
+
+                    // Bottom panel: 阅读方式 + 缩略图 + 滑动条
+                    AnimatedVisibility(
+                        visible = controls,
+                        enter = slideInVertically { it },
+                        exit = slideOutVertically { it },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    ) {
+                        ViewerControls(
+                            list = list,
+                            currentIndex = currentIndex,
+                            webtoon = webtoon,
+                            onModeChange = { webtoon = it },
+                            onGoTo = { i ->
+                                scope.launch {
+                                    if (webtoon) colState.scrollToItem(i) else pager.scrollToPage(i)
+                                }
+                            },
+                        )
+                    }
                 }
             }
-            TextButton(
-                onClick = onClose,
-                modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
-            ) { Text("关闭", color = Color.White) }
+            // Close affordance for loading / error states (image view uses the top bar).
+            if (files == null || error != null) {
+                TextButton(
+                    onClick = onClose,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                ) { Text("关闭", color = Color.White) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ViewerControls(
+    list: List<File>,
+    currentIndex: Int,
+    webtoon: Boolean,
+    onModeChange: (Boolean) -> Unit,
+    onGoTo: (Int) -> Unit,
+) {
+    val rowState = rememberLazyListState()
+    LaunchedEffect(currentIndex) {
+        runCatching { rowState.animateScrollToItem(currentIndex.coerceAtLeast(0)) }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xCC000000))
+            .pointerInput(Unit) { detectTapGestures { } } // swallow taps on the panel
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { onModeChange(false) }) {
+                Text("翻页", color = if (!webtoon) Color.White else Color(0x88FFFFFF))
+            }
+            TextButton(onClick = { onModeChange(true) }) {
+                Text("条漫", color = if (webtoon) Color.White else Color(0x88FFFFFF))
+            }
+        }
+        LazyRow(
+            state = rowState,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(horizontal = 4.dp),
+        ) {
+            itemsIndexed(list) { index, file ->
+                val selected = index == currentIndex
+                AsyncImage(
+                    model = file,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(46.dp, 62.dp)
+                        .border(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) Color.White else Color(0x55FFFFFF),
+                        )
+                        .clickable { onGoTo(index) },
+                )
+            }
+        }
+        if (list.size > 1) {
+            Slider(
+                value = currentIndex.toFloat(),
+                onValueChange = { v -> onGoTo(v.roundToInt()) },
+                valueRange = 0f..(list.size - 1).toFloat(),
+            )
         }
     }
 }
@@ -373,7 +500,7 @@ private fun isImageName(name: String): Boolean {
 
 /** Extract image entries from the task's saved zip into cache, preserving zip order. */
 private fun extractForView(context: Context, task: Task): List<File> {
-    val treeUri = SettingsStore(context).saveTreeUri
+    val treeUri = task.saveTreeUri ?: SettingsStore(context).saveTreeUri
         ?: throw IllegalStateException("未选择保存目录")
     val zipName = task.zipName ?: throw IllegalStateException("没有已保存的文件")
     val tree = DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
