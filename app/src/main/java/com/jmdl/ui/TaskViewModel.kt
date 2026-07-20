@@ -74,6 +74,9 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     fun addTask(input: String): String? {
         val id = JmIdParser.parse(input)
             ?: return "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
+        if (repo.tasks.value.any { it.jmId == id }) {
+            return "JM$id 已在列表中"
+        }
         repo.add(
             Task(
                 id = UUID.randomUUID().toString(),
