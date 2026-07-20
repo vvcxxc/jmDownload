@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,6 +104,7 @@ fun JmApp(vm: TaskViewModel) {
     val saveUri by vm.saveUri.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
     val snackbar = remember { SnackbarHostState() }
     var input by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<Task?>(null) }
@@ -217,7 +219,12 @@ fun JmApp(vm: TaskViewModel) {
                         onValueChange = { input = it },
                         onAdd = {
                             val err = vm.addTask(input)
-                            if (err == null) input = "" else scope.launch { snackbar.showSnackbar(err) }
+                            if (err == null) {
+                                input = ""
+                                focus.clearFocus()
+                            } else {
+                                scope.launch { snackbar.showSnackbar(err) }
+                            }
                         },
                     )
                 }
@@ -242,7 +249,12 @@ fun JmApp(vm: TaskViewModel) {
                             t = t,
                             selectionMode = selectionMode,
                             selected = t.id in selected,
-                            onOpen = { if (t.status == TaskStatus.DONE && t.zipName != null) viewing = t },
+                            onOpen = {
+                                if (t.status == TaskStatus.DONE && t.zipName != null) {
+                                    focus.clearFocus()
+                                    viewing = t
+                                }
+                            },
                             onToggleSelect = {
                                 selected = if (t.id in selected) selected - t.id else selected + t.id
                             },
