@@ -1,11 +1,28 @@
 @echo off
-REM One-command debug build for the JM downloader app.
-REM Uses the portable toolchain set up under C:\Android.
+REM One-command build for the JM downloader app.
 setlocal
-set "JAVA_HOME=C:\Android\jdk-17.0.19+10"
-set "ANDROID_HOME=C:\Android\sdk"
-set "ANDROID_SDK_ROOT=C:\Android\sdk"
-call "C:\Android\gradle\gradle-8.11.1\bin\gradle.bat" :app:assembleDebug --console=plain %*
+
+REM Build debug version first
+echo Building debug version...
+call gradlew.bat :app:assembleDebug %*
+if %errorlevel% neq 0 (
+    echo Debug build failed!
+    pause
+    exit /b %errorlevel%
+)
+
+REM Build release version
 echo.
-echo APK: app\build\outputs\apk\debug\app-debug.apk
+echo Building release version...
+call gradlew.bat :app:assembleRelease %*
+if %errorlevel% neq 0 (
+    echo Release build failed!
+    pause
+    exit /b %errorlevel%
+)
+
+echo.
+echo Build completed successfully!
+echo Debug APK: app\build\outputs\apk\debug\app-debug.apk
+echo Release APK: app\build\outputs\apk\release\app-release.apk
 endlocal

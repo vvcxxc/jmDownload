@@ -18,7 +18,7 @@ object JmIdParser {
         JM_PREFIXED.find(t)?.let { return it.groupValues[1] }
         URL_PATH.find(t)?.let { return it.groupValues[1] }
         URL_QUERY.find(t)?.let { return it.groupValues[1] }
-        BARE_NUMBER.find(t)?.let { return it.groupValues[1] }
+        t.filter { it.isDigit() }.takeIf { it.length >= 3 }?.let { return it }
         return null
     }
 }

@@ -30,10 +30,16 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_BG_IMAGE, null)
         set(value) = prefs.edit().putString(KEY_BG_IMAGE, value).apply()
 
+    /** Custom theme / accent color (ARGB Int), default 0xFF2979FF (Material Blue). */
+    var themeColor: Int
+        get() = prefs.getInt(KEY_THEME_COLOR, 0xFF2979FF.toInt())
+        set(value) = prefs.edit().putInt(KEY_THEME_COLOR, value).apply()
+
     private companion object {
         const val KEY_SAVE_URI = "saveTreeUri"
         const val KEY_WEBTOON = "webtoonMode"
         const val KEY_BG_COLOR = "bgColor"
         const val KEY_BG_IMAGE = "bgImageUri"
+        const val KEY_THEME_COLOR = "themeColor"
     }
 }

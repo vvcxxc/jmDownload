@@ -1,10 +1,12 @@
 package com.jmdl.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.ui.graphics.Color
 import com.jmdl.core.JmIdParser
 import com.jmdl.data.SettingsStore
 import com.jmdl.data.Task
@@ -12,12 +14,15 @@ import com.jmdl.data.TaskRepository
 import com.jmdl.data.TaskStatus
 import com.jmdl.download.DownloadService
 import com.jmdl.download.Storage
+import com.jmdl.util.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.UUID
+import java.util.zip.ZipInputStream
 
 class TaskViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -34,27 +39,46 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val _background = MutableStateFlow(Background(settings.bgColor, settings.bgImageUri))
     val background: StateFlow<Background> = _background.asStateFlow()
 
+    private val _themeColor = MutableStateFlow(Color(settings.themeColor))
+    val themeColor: StateFlow<Color> = _themeColor.asStateFlow()
+
+    private val _lastViewedTaskId = MutableStateFlow<String?>(null)
+    val lastViewedTaskId: StateFlow<String?> = _lastViewedTaskId.asStateFlow()
+
+    data class ImportResult(val success: Int, val failed: Int, val skipped: Int)
+    private val _importResult = MutableStateFlow<ImportResult?>(null)
+    val importResult: StateFlow<ImportResult?> = _importResult.asStateFlow()
+
+    fun clearImportResult() {
+        _importResult.value = null
+    }
+
     init {
-        // Resume any tasks left queued from a previous run.
         if (repo.hasPending()) DownloadService.start(app)
+    }
+
+    fun setLastViewedTaskId(taskId: String?) {
+        _lastViewedTaskId.value = taskId
     }
 
     fun setSaveUri(uri: Uri) {
         val s = uri.toString()
         settings.saveTreeUri = s
         _saveUri.value = s
+        AppLogger.i("settings saveUri changed -> $s")
     }
 
-    /** Back to the picker-free default (system Downloads/JMComic). */
     fun clearSaveUri() {
         settings.saveTreeUri = null
         _saveUri.value = null
+        AppLogger.i("settings saveUri reset to default")
     }
 
     fun setBgColor(argb: Int) {
         settings.bgColor = argb
         settings.bgImageUri = null
         _background.value = Background(argb, null)
+        AppLogger.i("settings background color changed")
     }
 
     fun setBgImage(uri: Uri) {
@@ -62,44 +86,63 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         settings.bgImageUri = s
         settings.bgColor = null
         _background.value = Background(null, s)
+        AppLogger.i("settings background image changed -> $s")
     }
 
     fun clearBg() {
         settings.bgColor = null
         settings.bgImageUri = null
         _background.value = Background(null, null)
+        AppLogger.i("settings background reset")
     }
 
-    /** Parses [input] and enqueues a task. Returns an error message on failure, else null. */
+    fun setThemeColor(argb: Int) {
+        settings.themeColor = argb
+        _themeColor.value = Color(argb)
+        AppLogger.i("settings theme color changed")
+    }
+
     fun addTask(input: String): String? {
         val id = JmIdParser.parse(input)
             ?: return "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
+
         val existing = repo.tasks.value.firstOrNull { it.jmId == id }
         if (existing != null) {
-            // A failed task doesn't count as "existing" — re-adding retries it (bumped to top).
-            if (existing.status == TaskStatus.FAILED) {
-                retry(existing.id)
-                return null
+            when (existing.status) {
+                TaskStatus.DONE -> return "JM$id 已下载完成"
+                TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED -> return "JM$id 已在列表中"
+                TaskStatus.FAILED -> {
+                    retry(existing.id)
+                    return null
+                }
+                TaskStatus.CANCELLED -> {
+                    retry(existing.id)
+                    return null
+                }
             }
-            return "JM$id 已在列表中"
         }
+
+        val taskId = UUID.randomUUID().toString()
         repo.add(
             Task(
-                id = UUID.randomUUID().toString(),
+                id = taskId,
                 jmId = id,
                 status = TaskStatus.QUEUED,
                 createdAt = System.currentTimeMillis(),
             )
         )
+        AppLogger.i("task created jmId=$id taskId=$taskId")
         DownloadService.start(getApplication())
         return null
     }
 
     fun retry(taskId: String) {
-        // If it already produced a file (完成但有失败), remove it so the retry replaces it.
         repo.byId(taskId)?.let { t ->
             if (t.fileUri != null || t.zipName != null) {
-                viewModelScope.launch(Dispatchers.IO) { Storage.deleteFile(getApplication(), t) }
+                viewModelScope.launch(Dispatchers.IO) {
+                    Storage.deleteFile(getApplication(), t)
+                    AppLogger.i("deleted file for retry taskId=$taskId")
+                }
             }
         }
         repo.update(taskId) {
@@ -107,30 +150,54 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 status = TaskStatus.QUEUED,
                 done = 0, total = 0, failed = 0,
                 message = null, zipName = null, fileUri = null,
-                createdAt = System.currentTimeMillis(), // count as new → moves to the top
+                createdAt = System.currentTimeMillis(),
             )
         }
+        AppLogger.i("task retried taskId=$taskId")
         DownloadService.start(getApplication())
     }
 
-    /** Removes only the task record; the saved zip in the folder is kept. */
-    fun remove(taskId: String) = repo.remove(taskId)
+    fun remove(taskId: String) {
+        val task = repo.byId(taskId)
+        if (task?.status == TaskStatus.RUNNING) {
+            DownloadService.cancelTask(getApplication(), taskId)
+        }
+        repo.remove(taskId)
+    }
 
-    /** Removes the task record AND deletes its saved zip. */
+    fun cancel(taskId: String) {
+        repo.cancelTask(taskId)
+        AppLogger.i("task cancelled taskId=$taskId")
+        DownloadService.cancelTask(getApplication(), taskId)
+    }
+
+    fun updatePage(taskId: String, page: Int, pageCount: Int) {
+        repo.update(taskId) { it.copy(currentPage = page, pageCount = pageCount) }
+    }
+
     fun removeWithFile(task: Task) {
+        if (task.status == TaskStatus.RUNNING) {
+            DownloadService.cancelTask(getApplication(), task.id)
+        }
         viewModelScope.launch(Dispatchers.IO) {
             Storage.deleteFile(getApplication(), task)
             repo.remove(task.id)
         }
     }
 
-    /** Batch remove. If [deleteFiles], also delete each task's saved zip. */
     fun removeTasks(ids: Set<String>, deleteFiles: Boolean) {
+        val targets = repo.tasks.value.filter { it.id in ids }
+        targets.forEach { task ->
+            if (task.status == TaskStatus.RUNNING) {
+                DownloadService.cancelTask(getApplication(), task.id)
+            }
+        }
+        
         if (!deleteFiles) {
             ids.forEach { repo.remove(it) }
             return
         }
-        val targets = repo.tasks.value.filter { it.id in ids }
+        
         viewModelScope.launch(Dispatchers.IO) {
             for (t in targets) {
                 Storage.deleteFile(getApplication(), t)
@@ -139,7 +206,6 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Move each selected task's zip into [dest], updating its saved-location + name. */
     fun moveTasks(ids: Set<String>, dest: Uri) {
         val targets = repo.tasks.value.filter { it.id in ids && it.zipName != null }
         val destStr = dest.toString()
@@ -149,7 +215,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             val cr = app.contentResolver
             for (t in targets) {
                 val name = t.zipName ?: continue
-                if (t.saveTreeUri == destStr) continue // already in destination
+                if (t.saveTreeUri == destStr) continue
                 runCatching {
                     val finalName = uniqueDocName(destDir, name)
                     val newDoc = destDir.createFile("application/zip", finalName)
@@ -164,6 +230,104 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    fun importLocalZips(uris: List<Uri>) {
+        val app = getApplication<Application>()
+        val cr = app.contentResolver
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            var successCount = 0
+            var failedCount = 0
+            var skippedCount = 0
+            
+            AppLogger.i("Starting import of ${uris.size} files")
+            
+            for (uri in uris) {
+                val docFile = DocumentFile.fromSingleUri(app, uri)
+                val fileName = docFile?.name ?: continue
+                
+                val jmId = extractJmIdFromFileName(fileName)
+                if (jmId == null) {
+                    AppLogger.w("Import skipped: Cannot extract JM ID from filename: $fileName")
+                    skippedCount++
+                    continue
+                }
+
+                val existing = repo.tasks.value.firstOrNull { it.jmId == jmId }
+                if (existing != null) {
+                    AppLogger.w("Import skipped: JM$jmId already exists")
+                    skippedCount++
+                    continue
+                }
+
+                runCatching {
+                    val pageCount = countImagesInZip(app, uri)
+                    
+                    val saved = Storage.copyFileToSaveLocation(
+                        app, uri, fileName, settings.saveTreeUri
+                    )
+                    
+                    val taskId = UUID.randomUUID().toString()
+                    repo.add(
+                        Task(
+                            id = taskId,
+                            jmId = jmId,
+                            title = fileName.substringBeforeLast('.').replace("JM$jmId-", ""),
+                            status = TaskStatus.DONE,
+                            total = pageCount,
+                            pageCount = pageCount,
+                            zipName = saved.name,
+                            fileUri = saved.fileUri,
+                            saveTreeUri = settings.saveTreeUri,
+                            createdAt = System.currentTimeMillis(),
+                        )
+                    )
+                    AppLogger.i("Import successful: JM$jmId ($pageCount pages)")
+                    successCount++
+                }.onFailure { e ->
+                    if (e is Storage.DuplicateFileException) {
+                        AppLogger.i("Import skipped: file exists ${e.fileName}")
+                        skippedCount++
+                    } else {
+                        AppLogger.e("Import failed: $fileName", e)
+                        failedCount++
+                    }
+                }
+            }
+            
+            AppLogger.i("Import completed: $successCount success, $failedCount failed, $skippedCount skipped")
+            _importResult.value = ImportResult(successCount, failedCount, skippedCount)
+        }
+    }
+
+    private fun extractJmIdFromFileName(fileName: String): String? {
+        val regex = Regex("JM(\\d{3,})", RegexOption.IGNORE_CASE)
+        return regex.find(fileName)?.groupValues?.get(1)
+    }
+
+    private fun countImagesInZip(context: Context, uri: Uri): Int {
+        var count = 0
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                ZipInputStream(input).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory && isImageFile(entry.name)) {
+                            count++
+                        }
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                    }
+                }
+            }
+        }
+        return count
+    }
+
+    private fun isImageFile(name: String): Boolean {
+        val ext = name.lowercase().substringAfterLast('.', "")
+        return ext in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
     }
 
     private fun uniqueDocName(dir: DocumentFile, name: String): String {
