@@ -1336,7 +1336,11 @@ private fun ViewerScreen(task: Task, vm: TaskViewModel, onClose: () -> Unit, sna
                             onModeChange = { webtoon = it; settings.webtoonMode = it },
                             onGoTo = { i ->
                                 scope.launch {
-                                    if (webtoon) colState.scrollToItem(i) else pager.scrollToPage(i)
+                                    if (webtoon) {
+                                        colState.scrollToItem(i)
+                                    } else {
+                                        pager.scrollToPage(i)
+                                    }
                                 }
                             },
                         )
@@ -1374,7 +1378,6 @@ private fun ViewerControls(
         val pad = ((viewport - thumbPx) / 2).coerceAtLeast(0)
         runCatching { rowState.scrollToItem(i, -pad) }
     }
-    var showJump by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -1391,7 +1394,6 @@ private fun ViewerControls(
                 Text("条漫", color = if (webtoon) Color.White else Color(0x88FFFFFF))
             }
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { showJump = true }) { Text("跳转", color = Color.White) }
         }
         LazyRow(
             state = rowState,
@@ -1421,33 +1423,6 @@ private fun ViewerControls(
                 valueRange = 0f..(list.size - 1).toFloat(),
             )
         }
-    }
-
-    if (showJump) {
-        var jumpInput by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showJump = false },
-            title = { Text("跳转到第几页") },
-            text = {
-                OutlinedTextField(
-                    value = jumpInput,
-                    onValueChange = { s -> jumpInput = s.filter { it.isDigit() }.take(6) },
-                    singleLine = true,
-                    label = { Text("1 - ${list.size}") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Done,
-                    ),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    jumpInput.toIntOrNull()?.let { onGoTo((it - 1).coerceIn(0, list.size - 1)) }
-                    showJump = false
-                }) { Text("确定") }
-            },
-            dismissButton = { TextButton(onClick = { showJump = false }) { Text("取消") } },
-        )
     }
 }
 
