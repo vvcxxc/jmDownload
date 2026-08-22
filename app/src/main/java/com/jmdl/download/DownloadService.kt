@@ -18,11 +18,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -32,8 +35,9 @@ class DownloadService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val drainMutex = Mutex()
-    private var activeWorker: Future<*>? = null
-    private var currentTaskId: String? = null
+    @Volatile private var activeTaskIds = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var activeWorkers = ConcurrentHashMap<String, Future<*>>()
+    @Volatile private var drainRunning = false
 
     private val repo by lazy { TaskRepository.get(this) }
     private val settings by lazy { SettingsStore(this) }
@@ -45,50 +49,111 @@ class DownloadService : Service() {
             handleCancel(intent)
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_PAUSE) {
+            handlePause(intent)
+            return START_NOT_STICKY
+        }
 
-        AppLogger.i("Download service started")
+        AppLogger.i("Download service started, drainRunning=$drainRunning")
         Notifications.ensureChannel(this)
+
+        if (drainRunning) {
+            AppLogger.w("Drain already running, restarting drain to pick up new tasks")
+            return START_NOT_STICKY
+        }
+        drainRunning = true
+        AppLogger.i("Drain loop starting")
+
         startForegroundCompat("准备下载…", "", 0, 0, indeterminate = true)
-        
         scope.launch {
             drainMutex.withLock { drainLoop() }
-            if (repo.nextQueued() == null) stopSelfSafely()
+            drainRunning = false
+            AppLogger.i("Drain loop finished, drainRunning=false")
+            if (repo.nextQueued() == null && activeTaskIds.isEmpty()) {
+                if (repo.tasks.value.any { it.status == TaskStatus.FAILED }) {
+                    updateNotif("下载完成", "有任务失败，点击查看详情", 0, 0, indeterminate = false)
+                } else {
+                    stopSelfSafely()
+                }
+            }
         }
         return START_NOT_STICKY
     }
 
     private fun handleCancel(intent: Intent) {
         val taskId = intent.getStringExtra(EXTRA_TASK_ID).orEmpty()
-        if (taskId.isNotEmpty()) {
-            repo.cancelTask(taskId)
-            AppLogger.i("Download cancel requested taskId=$taskId")
-            currentTaskId = null
-            activeWorker?.cancel(true)
-            activeWorker = null
+        if (taskId.isEmpty()) return
+        val worker = activeWorkers.remove(taskId)
+        AppLogger.i("Download cancel requested taskId=$taskId workerFound=${worker != null} active=${activeTaskIds.size}")
+        worker?.cancel(true)
+    }
+
+    private fun handlePause(intent: Intent) {
+        val taskId = intent.getStringExtra(EXTRA_TASK_ID).orEmpty()
+        if (taskId.isEmpty()) {
+            val ids = activeTaskIds.toList()
+            ids.forEach { id ->
+                repo.pauseTask(id)
+                val worker = activeWorkers.remove(id)
+                AppLogger.i("Pause requested taskId=$id workerFound=${worker != null}")
+                worker?.cancel(true)
+            }
+            AppLogger.i("Pausing all active tasks, count=${ids.size}")
+        } else {
+            repo.pauseTask(taskId)
+            val worker = activeWorkers.remove(taskId)
+            AppLogger.i("Download pause requested taskId=$taskId workerFound=${worker != null} active=${activeTaskIds.size}")
+            worker?.cancel(true)
         }
     }
 
     private suspend fun drainLoop() {
+        AppLogger.i("DrainLoop starting")
+        repo.failOtherActiveTasks(activeTaskIds.toSet())
+
         while (true) {
-            val task = repo.nextQueued() ?: break
-            processTask(task.id)
+            val maxConcurrent = settings.maxConcurrent
+            if (activeTaskIds.size >= maxConcurrent) {
+                delay(500)
+                continue
+            }
+            val task = repo.claimNextQueued()
+            if (task == null) {
+                if (activeTaskIds.isEmpty()) break
+                delay(500)
+                continue
+            }
+            activeTaskIds.add(task.id)
+            AppLogger.i("Task claimed taskId=${task.id} jmId=${task.jmId} active=${activeTaskIds.size}/$maxConcurrent queued=${repo.tasks.value.count { it.status == TaskStatus.QUEUED }}")
+            scope.launch {
+                try {
+                    AppLogger.i("Worker coroutine started taskId=${task.id} active=${activeTaskIds.size}")
+                    processTask(task.id)
+                } catch (e: Exception) {
+                    AppLogger.e("processTask failed taskId=${task.id}", e)
+                }
+            }
         }
+        AppLogger.i("DrainLoop all tasks completed")
     }
 
     private fun processTask(taskId: String) {
-        val task = repo.byId(taskId) ?: return
+        val task = repo.byId(taskId) ?: run { activeTaskIds.remove(taskId); return }
         val jmId = task.jmId
         val workDir = File(cacheDir, "work/$taskId")
         runCatching { workDir.deleteRecursively() }
 
-        AppLogger.i("Download start taskId=$taskId jmId=$jmId")
-        repo.update(taskId) { it.copy(status = TaskStatus.RUNNING, done = 0, total = 0, message = null) }
+        AppLogger.i("Download start taskId=$taskId jmId=$jmId activeCount=${activeTaskIds.size}")
+        updateAggregateNotif()
 
         try {
+            requireRunning(taskId)
+            AppLogger.i("Task phase=TITLE taskId=$taskId jmId=$jmId")
             val title = runWithTimeout(taskId) { JmEngine.getTitle(jmId) }
             repo.update(taskId) { it.copy(title = title) }
-            updateNotif(title, "下载中…", 0, 0, indeterminate = true)
 
+            requireRunning(taskId)
+            AppLogger.i("Task phase=DOWNLOAD taskId=$taskId jmId=$jmId title=$title")
             val outcome = runWithTimeout(taskId) {
                 var lastTick = 0L
                 var lastProgressAt = System.currentTimeMillis()
@@ -96,7 +161,10 @@ class DownloadService : Service() {
                 var lastReportedTotal = 0
 
                 JmEngine.download(jmId, workDir) { done, total ->
-                    if (repo.isCancelled(taskId)) throw RuntimeException("下载已取消")
+                    if (taskId !in activeTaskIds) {
+                        AppLogger.w("Download stopped, taskId=$taskId is no longer active")
+                        throw CancellationException("Download cancelled for taskId=$taskId")
+                    }
                     val now = System.currentTimeMillis()
                     val (safeDone, safeTotal) = JmEngine.calculateSafeProgress(done, total, lastReportedDone, lastReportedTotal)
 
@@ -107,9 +175,13 @@ class DownloadService : Service() {
                     if (now - lastTick > 300) {
                         lastTick = now
                         repo.update(taskId, persist = false) {
-                            it.copy(status = TaskStatus.RUNNING, done = safeDone, total = safeTotal)
+                            if (it.status != TaskStatus.RUNNING) it
+                            else it.copy(done = safeDone, total = safeTotal)
                         }
-                        updateNotif(title, "下载中 $safeDone/$safeTotal", safeDone, safeTotal, indeterminate = safeTotal == 0)
+                        if (now - lastNotifUpdate > NOTIF_UPDATE_INTERVAL) {
+                            lastNotifUpdate = now
+                            updateAggregateNotif()
+                        }
                         AppLogger.i("Download progress taskId=$taskId: $safeDone/$safeTotal")
                     }
 
@@ -120,27 +192,24 @@ class DownloadService : Service() {
                     }
 
                     if (now - lastProgressAt > STALLED_PROGRESS_MS) {
-                        throw TimeoutException("下载卡住")
+                        AppLogger.e("Download stalled taskId=$taskId, lastProgress=${safeDone}/${safeTotal}, idle=${now - lastProgressAt}ms")
+                        throw TimeoutException("下载卡住，${STALLED_PROGRESS_MS / 1000}秒无进度")
                     }
                 }
             }
 
-            if (repo.isCancelled(taskId)) {
-                AppLogger.i("Download cancelled before finalize taskId=$taskId")
-                return
-            }
-
+            AppLogger.i("Task phase=DOWNLOAD_DONE taskId=$taskId outcome=$outcome")
             repo.update(taskId) { it.copy(done = outcome.success, total = outcome.total) }
 
             if (outcome.success == 0) {
                 val errorMsg = "下载失败（0 张成功）"
                 AppLogger.w(errorMsg)
-                repo.update(taskId) { it.copy(status = TaskStatus.FAILED, message = errorMsg) }
+                repo.update(taskId) { it.copy(status = TaskStatus.FAILED, message = errorMsg, finishedAt = System.currentTimeMillis()) }
                 return
             }
 
             repo.update(taskId) { it.copy(status = TaskStatus.ZIPPING) }
-            updateNotif(title, "打包中…", 0, 0, indeterminate = true)
+            updateAggregateNotif()
 
             val zipName = FilenameSanitizer.zipName(jmId, title)
             val treeUriStr = settings.saveTreeUri
@@ -155,12 +224,13 @@ class DownloadService : Service() {
                     fileUri = saved.fileUri,
                     failed = outcome.failed,
                     message = note,
+                    finishedAt = System.currentTimeMillis(),
                 )
             }
             AppLogger.i("Download completed taskId=$taskId outcome=$outcome")
 
         } catch (e: TimeoutException) {
-            handleTimeout(taskId)
+            handleTimeout(taskId, e)
         } catch (e: CancellationException) {
             handleCancellation(taskId)
         } catch (e: Storage.DuplicateFileException) {
@@ -173,47 +243,76 @@ class DownloadService : Service() {
                     saveTreeUri = settings.saveTreeUri,
                     fileUri = existingUri,
                     message = "文件已存在，跳过下载",
+                    finishedAt = System.currentTimeMillis(),
                 )
             }
         } catch (e: Exception) {
             handleError(taskId, e)
         } finally {
+            AppLogger.i("Download finished taskId=$taskId status=${repo.byId(taskId)?.status}")
             cleanup(taskId, workDir)
         }
     }
 
-    private fun handleTimeout(taskId: String) {
-        AppLogger.w("Download timeout taskId=$taskId")
-        repo.update(taskId) {
-            if (repo.isCancelled(taskId)) {
-                it.copy(status = TaskStatus.CANCELLED, message = "已取消")
-            } else {
-                it.copy(status = TaskStatus.FAILED, message = "下载超时（超过 ${DOWNLOAD_TIMEOUT_MINUTES} 分钟）")
+    private fun handleTimeout(taskId: String, e: TimeoutException) {
+        AppLogger.e("Download timeout taskId=$taskId, setting FAILED", e)
+        try {
+            repo.update(taskId) {
+                if (repo.isPaused(it.id)) {
+                    it
+                } else {
+                    it.copy(status = TaskStatus.FAILED, message = e.message ?: "下载超时（超过 ${DOWNLOAD_TIMEOUT_MINUTES} 分钟）", finishedAt = System.currentTimeMillis())
+                }
             }
+        } catch (ex: Exception) {
+            AppLogger.e("handleTimeout failed taskId=$taskId", ex)
         }
     }
 
     private fun handleCancellation(taskId: String) {
-        AppLogger.i("Download cancelled taskId=$taskId")
-        repo.update(taskId) {
-            it.copy(status = TaskStatus.CANCELLED, message = "已取消")
+        AppLogger.e("Download cancelled taskId=$taskId, setting FAILED")
+        try {
+            repo.update(taskId) {
+                if (repo.isPaused(it.id)) {
+                    it
+                } else {
+                    it.copy(status = TaskStatus.FAILED, message = "已取消", finishedAt = System.currentTimeMillis())
+                }
+            }
+        } catch (ex: Exception) {
+            AppLogger.e("handleCancellation failed taskId=$taskId", ex)
         }
     }
 
     private fun handleError(taskId: String, e: Exception) {
-        AppLogger.e("Download error taskId=$taskId", e)
-        repo.update(taskId) {
-            if (repo.isCancelled(taskId)) {
-                it.copy(status = TaskStatus.CANCELLED, message = "已取消")
-            } else {
-                it.copy(status = TaskStatus.FAILED, message = e.message ?: e.javaClass.simpleName)
+        AppLogger.e("Download error taskId=$taskId, setting FAILED", e)
+        try {
+            repo.update(taskId) {
+                if (repo.isPaused(it.id)) {
+                    it
+                } else {
+                    it.copy(status = TaskStatus.FAILED, message = e.message ?: e.javaClass.simpleName, finishedAt = System.currentTimeMillis())
+                }
             }
+        } catch (ex: Exception) {
+            AppLogger.e("handleError failed taskId=$taskId", ex)
+        }
+    }
+
+    private fun requireRunning(taskId: String) {
+        val task = repo.byId(taskId) ?: throw CancellationException("任务不存在")
+        if (task.status != TaskStatus.RUNNING) {
+            AppLogger.w("Task $taskId is not RUNNING (${task.status}), aborting")
+            throw CancellationException("任务已暂停或取消")
         }
     }
 
     private fun cleanup(taskId: String, workDir: File) {
-        currentTaskId = null
-        activeWorker = null
+        AppLogger.i("Worker cleanup begin taskId=$taskId activeBefore=${activeTaskIds.size} workerPresent=${activeWorkers.containsKey(taskId)}")
+        activeTaskIds.remove(taskId)
+        activeWorkers.remove(taskId)
+        AppLogger.i("Worker cleanup end taskId=$taskId activeAfter=${activeTaskIds.size} queued=${repo.tasks.value.count { it.status == TaskStatus.QUEUED }}")
+        updateAggregateNotif()
         runCatching { workDir.deleteRecursively() }
             .onFailure { AppLogger.w("Failed to delete workDir: ${workDir.path}", it) }
     }
@@ -221,10 +320,10 @@ class DownloadService : Service() {
     private fun <T> runWithTimeout(taskId: String, action: () -> T): T {
         val executor = Executors.newSingleThreadExecutor()
         val future = executor.submit<T> {
-            currentTaskId = taskId
+            AppLogger.i("Worker thread entered taskId=$taskId")
             action()
         }
-        activeWorker = future
+        activeWorkers[taskId] = future
 
         try {
             return future.get(DOWNLOAD_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -234,12 +333,40 @@ class DownloadService : Service() {
         } catch (e: InterruptedException) {
             future.cancel(true)
             throw e
+        } catch (e: ExecutionException) {
+            val cause = e.cause ?: e
+            throw if (cause is Exception) cause else e
         } catch (e: Exception) {
             throw e
         } finally {
             executor.shutdownNow()
-            if (activeWorker === future) activeWorker = null
+            activeWorkers.remove(taskId, future)
+            AppLogger.i("Worker executor shutdown requested taskId=$taskId terminated=${executor.isTerminated}")
         }
+    }
+
+    private fun updateAggregateNotif() {
+        val count = activeTaskIds.size
+        if (count == 0) return
+        var aggregateDone = 0
+        var aggregateTotal = 0
+        val titles = mutableListOf<String>()
+        for (id in activeTaskIds) {
+            val task = repo.byId(id) ?: continue
+            if (task.status == TaskStatus.RUNNING) {
+                aggregateDone += task.done
+                aggregateTotal += task.total
+                if (!task.title.isNullOrEmpty()) titles.add(task.title)
+            }
+        }
+        val title = if (count == 1) {
+            titles.firstOrNull() ?: "下载中"
+        } else {
+            "下载中 ($count 个任务)"
+        }
+        val text = if (aggregateTotal > 0) "$aggregateDone/$aggregateTotal" else ""
+        val indeterminate = aggregateTotal == 0
+        updateNotif(title, text, aggregateDone, aggregateTotal, indeterminate)
     }
 
     private fun startForegroundCompat(
@@ -271,10 +398,13 @@ class DownloadService : Service() {
 
     companion object {
         private const val ACTION_CANCEL = "com.jmdl.CANCEL_TASK"
+        private const val ACTION_PAUSE = "com.jmdl.PAUSE_TASK"
         private const val EXTRA_TASK_ID = "task_id"
         private const val DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000L
         private const val DOWNLOAD_TIMEOUT_MINUTES = 5
-        private const val STALLED_PROGRESS_MS = 90_000L
+        private const val STALLED_PROGRESS_MS = 60_000L
+        @Volatile private var lastNotifUpdate = 0L
+        private const val NOTIF_UPDATE_INTERVAL = 1000L
 
         fun start(context: Context) {
             val i = Intent(context, DownloadService::class.java)
@@ -288,6 +418,18 @@ class DownloadService : Service() {
         fun cancelTask(context: Context, taskId: String) {
             val i = Intent(context, DownloadService::class.java).apply {
                 action = ACTION_CANCEL
+                putExtra(EXTRA_TASK_ID, taskId)
+            }
+            if (Build.VERSION.SDK_INT >= 26) {
+                context.startForegroundService(i)
+            } else {
+                context.startService(i)
+            }
+        }
+
+        fun pauseTask(context: Context, taskId: String) {
+            val i = Intent(context, DownloadService::class.java).apply {
+                action = ACTION_PAUSE
                 putExtra(EXTRA_TASK_ID, taskId)
             }
             if (Build.VERSION.SDK_INT >= 26) {

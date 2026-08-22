@@ -35,11 +35,17 @@ class SettingsStore(context: Context) {
         get() = prefs.getInt(KEY_THEME_COLOR, 0xFF2979FF.toInt())
         set(value) = prefs.edit().putInt(KEY_THEME_COLOR, value).apply()
 
+    /** Max concurrent downloads (1-5), default 3. */
+    var maxConcurrent: Int
+        get() = prefs.getInt(KEY_MAX_CONCURRENT, 3).coerceIn(1, 5)
+        set(value) = prefs.edit().putInt(KEY_MAX_CONCURRENT, value.coerceIn(1, 5)).apply()
+
     private companion object {
         const val KEY_SAVE_URI = "saveTreeUri"
         const val KEY_WEBTOON = "webtoonMode"
         const val KEY_BG_COLOR = "bgColor"
         const val KEY_BG_IMAGE = "bgImageUri"
         const val KEY_THEME_COLOR = "themeColor"
+        const val KEY_MAX_CONCURRENT = "maxConcurrent"
     }
 }

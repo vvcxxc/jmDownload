@@ -42,6 +42,9 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val _themeColor = MutableStateFlow(Color(settings.themeColor))
     val themeColor: StateFlow<Color> = _themeColor.asStateFlow()
 
+    private val _maxConcurrent = MutableStateFlow(settings.maxConcurrent)
+    val maxConcurrent: StateFlow<Int> = _maxConcurrent.asStateFlow()
+
     private val _lastViewedTaskId = MutableStateFlow<String?>(null)
     val lastViewedTaskId: StateFlow<String?> = _lastViewedTaskId.asStateFlow()
 
@@ -102,21 +105,41 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         AppLogger.i("settings theme color changed")
     }
 
-    fun addTask(input: String): String? {
-        val id = JmIdParser.parse(input)
-            ?: return "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
+    fun setMaxConcurrent(count: Int) {
+        settings.maxConcurrent = count
+        _maxConcurrent.value = count
+        AppLogger.i("settings maxConcurrent changed -> $count")
+    }
 
+    fun addTask(input: String): String? {
+        val ids = JmIdParser.parseAll(input)
+        if (ids.isEmpty()) return "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
+
+        var added = 0
+        val skipped = mutableListOf<String>()
+        ids.forEach { id ->
+            val err = addOneTask(id)
+            if (err != null) skipped.add(err) else added++
+        }
+        if (ids.isNotEmpty()) {
+            DownloadService.start(getApplication())
+        }
+
+        return when {
+            added > 0 && skipped.isEmpty() -> null  // 全部成功，不提示
+            added > 0 -> "添加 $added 个，${skipped.joinToString("，")}"  // 部分成功
+            else -> skipped.joinToString("，")  // 全部失败
+        }
+    }
+
+    private fun addOneTask(id: String): String? {
         val existing = repo.tasks.value.firstOrNull { it.jmId == id }
         if (existing != null) {
             when (existing.status) {
                 TaskStatus.DONE -> return "JM$id 已下载完成"
-                TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED -> return "JM$id 已在列表中"
+                TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED, TaskStatus.PAUSED -> return "JM$id 已在列表中"
                 TaskStatus.FAILED -> {
-                    retry(existing.id)
-                    return null
-                }
-                TaskStatus.CANCELLED -> {
-                    retry(existing.id)
+                    retryOneTask(existing)
                     return null
                 }
             }
@@ -132,20 +155,17 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             )
         )
         AppLogger.i("task created jmId=$id taskId=$taskId")
-        DownloadService.start(getApplication())
         return null
     }
 
-    fun retry(taskId: String) {
-        repo.byId(taskId)?.let { t ->
-            if (t.fileUri != null || t.zipName != null) {
-                viewModelScope.launch(Dispatchers.IO) {
-                    Storage.deleteFile(getApplication(), t)
-                    AppLogger.i("deleted file for retry taskId=$taskId")
-                }
+    private fun retryOneTask(t: Task) {
+        if (t.fileUri != null || t.zipName != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                Storage.deleteFile(getApplication(), t)
+                AppLogger.i("deleted file for retry taskId=${t.id}")
             }
         }
-        repo.update(taskId) {
+        repo.update(t.id) {
             it.copy(
                 status = TaskStatus.QUEUED,
                 done = 0, total = 0, failed = 0,
@@ -153,7 +173,17 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 createdAt = System.currentTimeMillis(),
             )
         }
-        AppLogger.i("task retried taskId=$taskId")
+        AppLogger.i("task retried taskId=${t.id}")
+    }
+
+    fun retry(taskId: String) {
+        repo.byId(taskId)?.let { retryOneTask(it) }
+        DownloadService.start(getApplication())
+    }
+
+    fun retryAll(taskIds: List<String>) {
+        AppLogger.i("retryAll called, count=${taskIds.size}")
+        taskIds.forEach { id -> repo.byId(id)?.let { retryOneTask(it) } }
         DownloadService.start(getApplication())
     }
 
@@ -165,10 +195,28 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         repo.remove(taskId)
     }
 
-    fun cancel(taskId: String) {
-        repo.cancelTask(taskId)
-        AppLogger.i("task cancelled taskId=$taskId")
-        DownloadService.cancelTask(getApplication(), taskId)
+    fun pause(taskId: String) {
+        repo.pauseTask(taskId)
+        AppLogger.i("task paused taskId=$taskId")
+        DownloadService.pauseTask(getApplication(), taskId)
+    }
+
+    fun resume(taskId: String) {
+        repo.resumeTask(taskId)
+        AppLogger.i("task resumed taskId=$taskId")
+        DownloadService.start(getApplication())
+    }
+
+    fun pauseAll() {
+        repo.pauseAll()
+        AppLogger.i("pauseAll called")
+        DownloadService.pauseTask(getApplication(), "")
+    }
+
+    fun resumeAll() {
+        repo.resumeAll()
+        AppLogger.i("resumeAll called")
+        DownloadService.start(getApplication())
     }
 
     fun updatePage(taskId: String, page: Int, pageCount: Int) {
@@ -248,15 +296,13 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 val fileName = docFile?.name ?: continue
                 
                 val jmId = extractJmIdFromFileName(fileName)
-                if (jmId == null) {
-                    AppLogger.w("Import skipped: Cannot extract JM ID from filename: $fileName")
-                    skippedCount++
-                    continue
-                }
+                    ?: fileName.substringBeforeLast('.')  // non-JM files: use filename as ID
 
-                val existing = repo.tasks.value.firstOrNull { it.jmId == jmId }
+                val existing = repo.tasks.value.firstOrNull {
+                    it.jmId == jmId || it.zipName == fileName
+                }
                 if (existing != null) {
-                    AppLogger.w("Import skipped: JM$jmId already exists")
+                    AppLogger.w("Import skipped: already exists (jmId=$jmId, file=$fileName)")
                     skippedCount++
                     continue
                 }
@@ -269,11 +315,16 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     
                     val taskId = UUID.randomUUID().toString()
+                    val title = if (jmId.all { it.isDigit() }) {
+                        fileName.substringBeforeLast('.').replace("JM$jmId-", "")
+                    } else {
+                        fileName.substringBeforeLast('.')
+                    }
                     repo.add(
                         Task(
                             id = taskId,
                             jmId = jmId,
-                            title = fileName.substringBeforeLast('.').replace("JM$jmId-", ""),
+                            title = title,
                             status = TaskStatus.DONE,
                             total = pageCount,
                             pageCount = pageCount,
@@ -281,9 +332,10 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                             fileUri = saved.fileUri,
                             saveTreeUri = settings.saveTreeUri,
                             createdAt = System.currentTimeMillis(),
+                            finishedAt = System.currentTimeMillis(),
                         )
                     )
-                    AppLogger.i("Import successful: JM$jmId ($pageCount pages)")
+                    AppLogger.i("Import successful: $jmId ($pageCount pages)")
                     successCount++
                 }.onFailure { e ->
                     if (e is Storage.DuplicateFileException) {

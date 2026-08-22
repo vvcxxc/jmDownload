@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -54,9 +56,12 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jmdl.data.Task
 import com.jmdl.data.TaskStatus
+import com.jmdl.download.DownloadService
 import com.jmdl.util.AppLogger
 import kotlinx.coroutines.launch
 import android.os.Build
@@ -70,6 +75,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Surface
 
 import androidx.compose.runtime.DisposableEffect
@@ -105,15 +113,22 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.CompositionLocalProvider
@@ -123,7 +138,7 @@ import kotlinx.coroutines.withContext
 import java.util.zip.ZipInputStream
 
 enum class TaskFilter {
-    ALL, DONE, RUNNING, FAILED
+    ALL, UNREAD, DONE, RUNNING, FAILED
 }
 
 private const val CARD_ALPHA = 0.8f
@@ -138,6 +153,7 @@ fun JmApp(vm: TaskViewModel) {
     val lastViewedId by vm.lastViewedTaskId.collectAsStateWithLifecycle()
     val importResult by vm.importResult.collectAsStateWithLifecycle()
     val themeColor by vm.themeColor.collectAsStateWithLifecycle()
+    val maxConcurrent by vm.maxConcurrent.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
@@ -152,9 +168,19 @@ fun JmApp(vm: TaskViewModel) {
     var showBackground by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
     var showThemeColor by remember { mutableStateOf(false) }
+    var showInputRules by remember { mutableStateOf(false) }
     var currentFilter by remember { mutableStateOf(TaskFilter.ALL) }
     var cropOutputUri by remember { mutableStateOf<Uri?>(null) }
     val listState = rememberLazyListState()
+    val stickyUnreadIds = remember { mutableStateOf(setOf<String>()) }
+
+    LaunchedEffect(currentFilter) {
+        if (currentFilter == TaskFilter.UNREAD) {
+            stickyUnreadIds.value = tasks.filter { it.status == TaskStatus.DONE && it.currentPage == null }.map { it.id }.toSet()
+        } else {
+            stickyUnreadIds.value = emptySet()
+        }
+    }
     
     LaunchedEffect(importResult) {
         importResult?.let { result ->
@@ -169,15 +195,21 @@ fun JmApp(vm: TaskViewModel) {
         }
     }
 
-    val filteredTasks = remember(tasks, currentFilter) {
-        tasks.filter { task ->
+    val filteredTasks = remember(tasks, currentFilter, stickyUnreadIds.value) {
+        val list = tasks.filter { task ->
             when (currentFilter) {
-                TaskFilter.ALL -> true
+                TaskFilter.ALL -> task.status == TaskStatus.DONE || task.status == TaskStatus.FAILED
+                TaskFilter.UNREAD -> task.id in stickyUnreadIds.value
                 TaskFilter.DONE -> task.status == TaskStatus.DONE
-                TaskFilter.RUNNING -> task.status == TaskStatus.RUNNING || task.status == TaskStatus.ZIPPING || task.status == TaskStatus.QUEUED
-                TaskFilter.FAILED -> task.status == TaskStatus.FAILED
+                TaskFilter.RUNNING -> task.status == TaskStatus.RUNNING || task.status == TaskStatus.ZIPPING || task.status == TaskStatus.QUEUED || task.status == TaskStatus.PAUSED
+                TaskFilter.FAILED -> task.status == TaskStatus.FAILED || (task.status == TaskStatus.DONE && task.failed > 0)
             }
-        }.sortedByDescending { it.createdAt }
+        }
+        if (currentFilter == TaskFilter.RUNNING) {
+            list.sortedBy { if (it.status == TaskStatus.PAUSED) Long.MAX_VALUE else it.createdAt }
+        } else {
+            list.sortedByDescending { it.finishedAt ?: it.createdAt }
+        }
     }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -281,8 +313,31 @@ fun JmApp(vm: TaskViewModel) {
     val bgImage = bg.imageUri
     val bgColor = bg.color
 
-    LaunchedEffect(filteredTasks.firstOrNull()?.id, filteredTasks.size) {
-        if (filteredTasks.isNotEmpty()) listState.animateScrollToItem(0)
+    LaunchedEffect(lastViewedId) {
+        if (lastViewedId != null) {
+            val idx = filteredTasks.indexOfFirst { it.id == lastViewedId }
+            if (idx >= 0) {
+                listState.animateScrollToItem(idx)
+            }
+        }
+    }
+
+    val prevTaskCount = remember { mutableStateOf(0) }
+    val prevFilter = remember { mutableStateOf(currentFilter) }
+    LaunchedEffect(filteredTasks.size, currentFilter) {
+        val current = filteredTasks.size
+        if (currentFilter != prevFilter.value) {
+            listState.animateScrollToItem(0)
+        } else if (current > prevTaskCount.value) {
+            listState.animateScrollToItem(0)
+        } else if (current < prevTaskCount.value && current > 0) {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            if (lastVisible < 0 || listState.firstVisibleItemIndex + listState.layoutInfo.visibleItemsInfo.size > current) {
+                listState.animateScrollToItem(current - 1)
+            }
+        }
+        prevTaskCount.value = current
+        prevFilter.value = currentFilter
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -440,13 +495,46 @@ fun JmApp(vm: TaskViewModel) {
                                         selectionMode = true
                                         selected = selected + t.id
                                     },
+                                    onCopyTitle = { title ->
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("title", title))
+                                        scope.launch { snackbar.showSnackbar("已复制标题") }
+                                    },
                                     onRetry = { vm.retry(t.id) },
-                                    onCancel = { vm.cancel(t.id) },
+                                    onPause = { vm.pause(t.id) },
+                                    onResume = { vm.resume(t.id) },
                                     onRemove = { pendingDelete = t },
                                 )
                             }
                         }
 
+                        if (currentFilter == TaskFilter.RUNNING && filteredTasks.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Button(
+                                    onClick = { vm.pauseAll() },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                    ),
+                                ) {
+                                    Text("全部暂停")
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Button(
+                                    onClick = { vm.resumeAll() },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                                ) {
+                                    Text("全部继续")
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                        }
                         if (currentFilter == TaskFilter.FAILED && filteredTasks.isNotEmpty()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -468,7 +556,7 @@ fun JmApp(vm: TaskViewModel) {
                                 Spacer(Modifier.width(8.dp))
                                 Button(
                                     onClick = {
-                                        filteredTasks.forEach { vm.retry(it.id) }
+                                        vm.retryAll(filteredTasks.map { it.id })
                                     },
                                     modifier = Modifier.weight(1f),
                                     colors = ButtonDefaults.buttonColors(containerColor = themeColor),
@@ -505,6 +593,7 @@ fun JmApp(vm: TaskViewModel) {
         SettingsDialog(
             saveUri = saveUri,
             themeColor = themeColor,
+            maxConcurrent = maxConcurrent,
             onPick = {
                 showSettings = false
                 folderPicker.launch(null)
@@ -520,6 +609,8 @@ fun JmApp(vm: TaskViewModel) {
                 localImportLauncher.launch(arrayOf("application/zip"))
             },
             onThemeColor = { showThemeColor = true },
+            onShowRules = { showInputRules = true },
+            onMaxConcurrent = { vm.setMaxConcurrent(it) },
             onDismiss = { showSettings = false },
         )
     }
@@ -527,6 +618,12 @@ fun JmApp(vm: TaskViewModel) {
     if (showLog) {
         LogDialog(
             onDismiss = { showLog = false },
+        )
+    }
+
+    if (showInputRules) {
+        InputRulesDialog(
+            onDismiss = { showInputRules = false },
         )
     }
 
@@ -589,7 +686,13 @@ private fun FilterTabs(currentFilter: TaskFilter, onFilterChange: (TaskFilter) -
                 RoundedCornerShape(12.dp)
             )
     ) {
-        val tabs = listOf(TaskFilter.ALL to "全部", TaskFilter.DONE to "已下载", TaskFilter.RUNNING to "下载中", TaskFilter.FAILED to "下载失败")
+        val tabs = listOf(
+            TaskFilter.ALL to "全部",
+            TaskFilter.UNREAD to "未读",
+            TaskFilter.DONE to "已下载",
+            TaskFilter.RUNNING to "下载中",
+            TaskFilter.FAILED to "下载失败"
+        )
         tabs.forEach { (filter, label) ->
             val isSelected = currentFilter == filter
             Box(
@@ -602,9 +705,52 @@ private fun FilterTabs(currentFilter: TaskFilter, onFilterChange: (TaskFilter) -
                 Text(
                     text = label,
                     color = if (isSelected) themeColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = if (isSelected) MaterialTheme.typography.labelLarge else MaterialTheme.typography.labelMedium,
-                    fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal
+                    style = if (isSelected) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall,
+                    fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                    maxLines = 1,
+                    softWrap = false,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactDialog(
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: (@Composable () -> Unit)?,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: (@Composable () -> Unit)? = null,
+) {
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(modifier = Modifier.padding(top = 20.dp, bottom = 8.dp)) {
+                Box(modifier = Modifier.padding(horizontal = 24.dp)) {
+                    title()
+                }
+                if (text != null) {
+                    Box(
+                        modifier = Modifier
+                            .padding(start = 24.dp, end = 14.dp, top = 8.dp, bottom = 4.dp)
+                    ) {
+                        text()
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    dismissButton?.invoke()
+                    confirmButton()
+                }
             }
         }
     }
@@ -618,9 +764,13 @@ private fun DeleteDialog(
     onTaskOnly: () -> Unit,
     onWithFile: () -> Unit,
 ) {
-    AlertDialog(
+    val scrollState = rememberScrollState()
+    CompactDialog(
         onDismissRequest = onDismiss,
-        title = { Text("删除「JM${task.jmId}」") },
+        title = { 
+            val label = if (task.jmId.all { it.isDigit() }) "JM${task.jmId}" else (task.title ?: task.jmId)
+            Text("删除「$label」") 
+        },
         text = {
             Text(
                 if (canDeleteFile)
@@ -658,7 +808,7 @@ private fun BatchDeleteDialog(
     onTaskOnly: () -> Unit,
     onWithFile: () -> Unit,
 ) {
-    AlertDialog(
+    CompactDialog(
         onDismissRequest = onDismiss,
         title = { Text("删除选中的 $count 项") },
         text = {
@@ -688,23 +838,39 @@ private fun BatchDeleteDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsDialog(
     saveUri: String?,
     themeColor: Color,
+    maxConcurrent: Int,
     onPick: () -> Unit,
     onReset: () -> Unit,
     onOpenBackground: () -> Unit,
     onShowLog: () -> Unit,
     onImportLocal: () -> Unit,
     onThemeColor: () -> Unit,
+    onShowRules: () -> Unit,
+    onMaxConcurrent: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    val scrollState = rememberScrollState()
+    CompactDialog(
         onDismissRequest = onDismiss,
         title = { Text("设置") },
         text = {
-            Column {
+            Box(
+                modifier = Modifier
+                    .height(320.dp)
+                    .padding(end = 10.dp)
+                    .scrollHints(scrollState),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 10.dp)
+                        .verticalScroll(scrollState),
+                ) {
                 Text("保存位置", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -724,21 +890,58 @@ private fun SettingsDialog(
                         Text(if (saveUri == null) "自定义目录" else "更改目录")
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(10.dp))
                 Text("本地导入", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 Button(
                     onClick = onImportLocal,
                     colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                 ) { Text("导入本地压缩包（ZIP）") }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("同时下载任务数", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                var dropdownExpanded by remember { mutableStateOf(false) }
+                val options = (1..5).toList()
+                ExposedDropdownMenuBox(
+                    expanded = dropdownExpanded,
+                    onExpandedChange = { dropdownExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = "$maxConcurrent",
+                        onValueChange = {},
+                        readOnly = true,
+                        modifier = Modifier
+                            .width(240.dp)
+                            .menuAnchor(),
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(
+                            focusedBorderColor = themeColor,
+                        ),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = dropdownExpanded,
+                        onDismissRequest = { dropdownExpanded = false },
+                    ) {
+                        options.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text("$option") },
+                                onClick = {
+                                    onMaxConcurrent(option)
+                                    dropdownExpanded = false
+                                },
+                                contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
                 Text("主页背景", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 Button(
                     onClick = onOpenBackground,
                     colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                 ) { Text("自定义背景（颜色 / 图片）") }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(10.dp))
                 Text("主题色", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -754,17 +957,144 @@ private fun SettingsDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                     ) { Text("选择主题色") }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
+                Text("规则说明", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                Button(
+                    onClick = onShowRules,
+                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                ) { Text("规则说明") }
+                Spacer(Modifier.height(8.dp))
                 Text("日志", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 Button(
                     onClick = onShowLog,
                     colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                 ) { Text("查看日志") }
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
+}
+
+@Composable
+private fun InputRulesDialog(onDismiss: () -> Unit) {
+    val scrollState = rememberScrollState()
+    val rules = """
+输入框默认弹出数字键盘，支持以下输入方式：
+
+1. 单个编号
+   直接输入数字，如：350234
+   带 JM 前缀，如：JM350234（JM 不分大小写，jm350234 同样有效）
+   JM 和数字间可有空格，如：JM 350234
+
+2. 多个编号（分隔符）
+   中英文逗号或分号分隔，如：
+   350234, JM350235; JM 350236
+   每个编号可以是纯数字或带 JM 前缀
+
+3. 粘连编号（无分隔符）
+   多个 JM 编号连在一起会自动拆分，如：
+   JM428980JM433633JM435515
+   → 识别为 428980、433633、435515
+
+4. 文本提取
+   输入带中文描述的文本，自动提取所有数字拼接为一个编号：
+   "老师们东方绀珠传游玩12次撞残50次重开558次成功通关" → 1250558
+
+5. 自动去重
+   同一编号出现多次只添加一次
+
+Tab 显示规则：
+
+1. 全部
+    显示已下载完成和下载失败的任务，不显示排队中或正在下载的任务
+
+2. 未读
+    显示已下载完成但尚未打开阅读的任务。进入未读 Tab 时会固定当前未读列表，避免阅读返回后任务位置变化
+
+3. 已下载
+    显示已下载完成的任务，包括部分图片下载失败但已经打包保存的任务
+
+4. 下载中
+    显示排队中、下载中、打包中和已暂停的任务
+
+5. 下载失败
+    显示下载失败的任务，以及已下载完成但有图片下载失败的任务
+    """.trimIndent()
+
+    CompactDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("规则说明") },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(320.dp)
+                    .padding(end = 10.dp)
+                    .scrollHints(scrollState),
+            ) {
+                Text(
+                    rules,
+                    style = MaterialTheme.typography.bodySmall,
+                    lineHeight = MaterialTheme.typography.bodySmall.lineHeight,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 10.dp)
+                        .verticalScroll(scrollState),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
+    )
+}
+
+@Composable
+private fun Modifier.scrollHints(scrollState: ScrollState): Modifier {
+    val density = LocalDensity.current
+    val indicatorColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+    val fadeHeight = with(density) { 18.dp.toPx() }
+    val thumbMinHeight = with(density) { 24.dp.toPx() }
+    val thumbWidth = with(density) { 3.dp.toPx() }
+    val thumbInset = with(density) { 8.dp.toPx() }
+    return drawWithContent {
+        drawContent()
+        if (scrollState.maxValue > 0) {
+            val contentHeight = size.height + scrollState.maxValue
+            val thumbHeight = (size.height * size.height / contentHeight)
+                .coerceAtLeast(thumbMinHeight)
+                .coerceAtMost(size.height)
+            val scrollFraction = scrollState.value.toFloat() / scrollState.maxValue
+            val thumbTop = (size.height - thumbHeight) * scrollFraction
+            val right = size.width - thumbWidth - thumbInset
+
+            if (scrollState.value > 0) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        listOf(Color.Transparent, indicatorColor.copy(alpha = 0.12f))
+                    ),
+                    topLeft = Offset.Zero,
+                    size = Size(size.width, fadeHeight),
+                )
+            }
+            if (scrollState.value < scrollState.maxValue) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        listOf(indicatorColor.copy(alpha = 0.12f), Color.Transparent)
+                    ),
+                    topLeft = Offset(0f, size.height - fadeHeight),
+                    size = Size(size.width, fadeHeight),
+                )
+            }
+            drawRoundRect(
+                color = indicatorColor,
+                topLeft = Offset(right, thumbTop),
+                size = Size(thumbWidth, thumbHeight),
+                cornerRadius = CornerRadius(thumbWidth, thumbWidth),
+            )
+        }
+    }
 }
 
 @Composable
@@ -774,7 +1104,7 @@ private fun LogDialog(onDismiss: () -> Unit) {
     LaunchedEffect(Unit) {
         text = AppLogger.snapshot().joinToString(separator = "\n")
     }
-    AlertDialog(
+    CompactDialog(
         onDismissRequest = onDismiss,
         title = { Text("日志") },
         text = {
@@ -944,7 +1274,7 @@ private fun ColorPickerDialog(
     onDismiss: () -> Unit,
 ) {
     var color by remember { mutableStateOf(initialColor) }
-    AlertDialog(
+    CompactDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -971,7 +1301,7 @@ private fun BackgroundDialog(
     onDismiss: () -> Unit,
 ) {
     var showColorPicker by remember { mutableStateOf(false) }
-    AlertDialog(
+    CompactDialog(
         onDismissRequest = onDismiss,
         title = { Text("主页背景") },
         text = {
@@ -1015,7 +1345,7 @@ private fun InputRow(value: String, onValueChange: (String) -> Unit, onAdd: () -
             modifier = Modifier.weight(1f),
             singleLine = true,
             leadingIcon = { Text("JM", style = MaterialTheme.typography.titleMedium) },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, keyboardType = KeyboardType.Number),
             keyboardActions = KeyboardActions(onDone = { onAdd() }),
         )
         Spacer(Modifier.width(8.dp))
@@ -1037,13 +1367,17 @@ private fun TaskRow(
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
+    onCopyTitle: (String) -> Unit,
     onRetry: () -> Unit,
-    onCancel: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val themeColor = LocalThemeColor.current
     val openable = t.status == TaskStatus.DONE && t.zipName != null
-    Card(
+    val unread = t.status == TaskStatus.DONE && t.currentPage == null
+    Box {
+        Card(
         Modifier
             .fillMaxWidth()
             .border(
@@ -1070,11 +1404,16 @@ private fun TaskRow(
                     Spacer(Modifier.width(4.dp))
                 }
                 Column(Modifier.weight(1f)) {
+                    val displayName = if (t.jmId.all { it.isDigit() }) "JM${t.jmId}" else t.title ?: t.jmId
+                    val copyTitle = t.title ?: "JM${t.jmId}"
                     Text(
-                        "JM${t.jmId}" + (t.title?.let { " · $it" } ?: ""),
+                        displayName + (t.title?.let { if (t.jmId.all { it.isDigit() }) " · $it" else "" } ?: ""),
                         style = MaterialTheme.typography.bodyLarge,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.pointerInput(copyTitle) {
+                            detectTapGestures(onLongPress = { onCopyTitle(copyTitle) })
+                        },
                     )
                     Text(
                         statusText(t),
@@ -1095,11 +1434,14 @@ private fun TaskRow(
                     }
                 }
                 if (!selectionMode) {
-                    if (t.status == TaskStatus.FAILED || t.status == TaskStatus.CANCELLED || (t.status == TaskStatus.DONE && t.failed > 0)) {
+                    if (t.status == TaskStatus.FAILED || (t.status == TaskStatus.DONE && t.failed > 0)) {
                         TextButton(onClick = onRetry) { Text("重试") }
                     }
+                    if (t.status == TaskStatus.PAUSED) {
+                        TextButton(onClick = onResume) { Text("下载") }
+                    }
                     if (t.status == TaskStatus.QUEUED || t.status == TaskStatus.RUNNING || t.status == TaskStatus.ZIPPING) {
-                        TextButton(onClick = onCancel) { Text("取消") }
+                        TextButton(onClick = onPause) { Text("暂停") }
                     }
                     TextButton(onClick = onRemove) { Text("删除") }
                 }
@@ -1119,6 +1461,23 @@ private fun TaskRow(
                 }
             }
         }
+    }
+    if (unread) {
+        Surface(
+            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+            shape = RoundedCornerShape(6.dp),
+            color = themeColor,
+            shadowElevation = 2.dp,
+        ) {
+            Text(
+                "未读",
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
     }
 }
 
@@ -1314,7 +1673,30 @@ private fun ViewerScreen(task: Task, vm: TaskViewModel, onClose: () -> Unit, sna
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             TextButton(onClick = onClose) { Text("关闭", color = Color.White) }
-                            Spacer(Modifier.weight(1f))
+                            val title = task.title ?: "JM${task.jmId}"
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    title,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier
+                                        .pointerInput(Unit) {
+                                            detectTapGestures(
+                                                onLongPress = {
+                                                    clipboard.setPrimaryClip(ClipData.newPlainText("title", title))
+                                                    scope.launch { snackbar.showSnackbar("已复制标题") }
+                                                }
+                                            )
+                                        },
+                                )
+                            }
                             Text(
                                 "${currentIndex + 1} / ${list.size}",
                                 color = Color.White,
@@ -1473,7 +1855,7 @@ private fun statusText(t: Task): String = when (t.status) {
         t.zipName?.let { append(" · ").append(it) }
     }
     TaskStatus.FAILED -> "失败：${t.message ?: "未知错误"}"
-    TaskStatus.CANCELLED -> "已取消"
+    TaskStatus.PAUSED -> "已暂停"
 }
 
 @Composable
@@ -1481,7 +1863,7 @@ private fun statusColor(t: Task): Color {
     val themeColor = LocalThemeColor.current
     return when (t.status) {
         TaskStatus.FAILED -> MaterialTheme.colorScheme.error
-        TaskStatus.CANCELLED -> MaterialTheme.colorScheme.tertiary
+        TaskStatus.PAUSED -> MaterialTheme.colorScheme.tertiary
         TaskStatus.DONE -> themeColor
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }

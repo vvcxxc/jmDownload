@@ -36,8 +36,8 @@ class TaskRepository private constructor(private val file: File) {
 
             _tasks.value = list.map {
                 if (it.status == TaskStatus.RUNNING || it.status == TaskStatus.ZIPPING) {
-                    AppLogger.w("Task ${it.id} was in ${it.status} state, re-queuing")
-                    it.copy(status = TaskStatus.QUEUED, done = 0, message = null)
+                    AppLogger.w("Task ${it.id} was in stale ${it.status} state, marking failed")
+                    it.copy(status = TaskStatus.FAILED, message = "上次下载中断，已标记失败", finishedAt = System.currentTimeMillis())
                 } else {
                     it
                 }
@@ -65,6 +65,7 @@ class TaskRepository private constructor(private val file: File) {
             saveTreeUri = o.optString("saveTreeUri").ifEmpty { null },
             fileUri = o.optString("fileUri").ifEmpty { null },
             createdAt = o.optLong("createdAt"),
+            finishedAt = o.optLong("finishedAt").let { if (it > 0) it else null },
             currentPage = o.optInt("currentPage").let { if (it >= 0) it else null },
             pageCount = o.optInt("pageCount").let { if (it >= 0) it else null },
         )
@@ -97,6 +98,7 @@ class TaskRepository private constructor(private val file: File) {
             put("saveTreeUri", t.saveTreeUri ?: "")
             put("fileUri", t.fileUri ?: "")
             put("createdAt", t.createdAt)
+            put("finishedAt", t.finishedAt ?: -1)
             put("currentPage", t.currentPage ?: -1)
             put("pageCount", t.pageCount ?: -1)
         }
@@ -128,21 +130,73 @@ class TaskRepository private constructor(private val file: File) {
 
     fun byId(id: String): Task? = _tasks.value.firstOrNull { it.id == id }
 
-    fun nextQueued(): Task? = _tasks.value.firstOrNull { it.status == TaskStatus.QUEUED }
+    fun nextQueued(): Task? = _tasks.value.filter { it.status == TaskStatus.QUEUED }.minByOrNull { it.createdAt }
+
+    fun claimNextQueued(): Task? = synchronized(lock) {
+        val task = _tasks.value.filter { it.status == TaskStatus.QUEUED }.minByOrNull { it.createdAt }
+            ?: return null
+        _tasks.value = _tasks.value.map {
+            if (it.id == task.id) it.copy(status = TaskStatus.RUNNING, done = 0, total = 0, message = null)
+            else it
+        }
+        AppLogger.i("Claimed task: ${task.id} jmId=${task.jmId}")
+        persist()
+        task.copy(status = TaskStatus.RUNNING, done = 0, total = 0, message = null)
+    }
+
+    fun failOtherActiveTasks(activeIds: Set<String>) = synchronized(lock) {
+        var changed = false
+        _tasks.value = _tasks.value.map { task ->
+            if (task.id !in activeIds && (task.status == TaskStatus.RUNNING || task.status == TaskStatus.ZIPPING)) {
+                changed = true
+                AppLogger.w("Task ${task.id} is not in active set, marking failed")
+                task.copy(status = TaskStatus.FAILED, message = "任务状态失效，已标记失败", finishedAt = System.currentTimeMillis())
+            } else {
+                task
+            }
+        }
+        if (changed) persist()
+    }
 
     fun hasPending(): Boolean = _tasks.value.any {
         it.status == TaskStatus.QUEUED || it.status == TaskStatus.RUNNING || it.status == TaskStatus.ZIPPING
     }
 
-    fun cancelTask(id: String) = synchronized(lock) {
+    fun isPaused(id: String): Boolean = _tasks.value.firstOrNull { it.id == id }?.status == TaskStatus.PAUSED
+
+    fun pauseTask(id: String) = synchronized(lock) {
         _tasks.value = _tasks.value.map {
-            if (it.id == id) it.copy(status = TaskStatus.CANCELLED, message = "已取消") else it
+            if (it.id == id) it.copy(status = TaskStatus.PAUSED, message = "已暂停") else it
         }
-        AppLogger.i("Cancelled task: $id")
+        AppLogger.i("Paused task: $id")
         persist()
     }
 
-    fun isCancelled(id: String): Boolean = _tasks.value.firstOrNull { it.id == id }?.status == TaskStatus.CANCELLED
+    fun resumeTask(id: String) = synchronized(lock) {
+        _tasks.value = _tasks.value.map {
+            if (it.id == id) it.copy(status = TaskStatus.QUEUED, message = null, createdAt = System.currentTimeMillis()) else it
+        }
+        AppLogger.i("Resumed task: $id")
+        persist()
+    }
+
+    fun pauseAll() = synchronized(lock) {
+        _tasks.value = _tasks.value.map {
+            if (it.status == TaskStatus.QUEUED || it.status == TaskStatus.RUNNING || it.status == TaskStatus.ZIPPING)
+                it.copy(status = TaskStatus.PAUSED, message = "已暂停")
+            else it
+        }
+        AppLogger.i("Paused all active tasks")
+        persist()
+    }
+
+    fun resumeAll() = synchronized(lock) {
+        _tasks.value = _tasks.value.map {
+            if (it.status == TaskStatus.PAUSED) it.copy(status = TaskStatus.QUEUED, message = null, createdAt = System.currentTimeMillis()) else it
+        }
+        AppLogger.i("Resumed all paused tasks")
+        persist()
+    }
 
     companion object {
         @Volatile
