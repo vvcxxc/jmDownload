@@ -63,6 +63,7 @@ import com.jmdl.data.Task
 import com.jmdl.data.TaskStatus
 import com.jmdl.download.DownloadService
 import com.jmdl.util.AppLogger
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import android.os.Build
 import android.provider.MediaStore
@@ -195,6 +196,15 @@ fun JmApp(vm: TaskViewModel) {
         }
     }
 
+    val tabCounts = remember(tasks) {
+        val all = tasks.count { it.status == TaskStatus.DONE || it.status == TaskStatus.FAILED }
+        val unread = tasks.count { it.status == TaskStatus.DONE && it.currentPage == null }
+        val done = tasks.count { it.status == TaskStatus.DONE }
+        val running = tasks.count { it.status in setOf(TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED, TaskStatus.PAUSED) }
+        val failed = tasks.count { it.status == TaskStatus.FAILED || (it.status == TaskStatus.DONE && it.failed > 0) }
+        mapOf(TaskFilter.ALL to all, TaskFilter.UNREAD to unread, TaskFilter.DONE to done, TaskFilter.RUNNING to running, TaskFilter.FAILED to failed)
+    }
+
     val filteredTasks = remember(tasks, currentFilter, stickyUnreadIds.value) {
         val list = tasks.filter { task ->
             when (currentFilter) {
@@ -303,7 +313,7 @@ fun JmApp(vm: TaskViewModel) {
     ) { uris: List<Uri>? ->
         if (!uris.isNullOrEmpty()) {
             showSettings = false
-            currentFilter = TaskFilter.ALL
+            currentFilter = TaskFilter.RUNNING
             vm.importLocalZips(uris)
             scope.launch { snackbar.showSnackbar("正在导入 ${uris.size} 个文件…") }
         }
@@ -417,7 +427,7 @@ fun JmApp(vm: TaskViewModel) {
                             onValueChange = { input = it },
                             onAdd = {
                                 val err = vm.addTask(input)
-                                currentFilter = TaskFilter.ALL
+                                currentFilter = TaskFilter.RUNNING
                                 if (err == null) {
                                     input = ""
                                     focus.clearFocus()
@@ -435,6 +445,7 @@ fun JmApp(vm: TaskViewModel) {
 
                 FilterTabs(
                     currentFilter = currentFilter,
+                    tabCounts = tabCounts,
                     onFilterChange = { currentFilter = it }
                 )
 
@@ -676,15 +687,19 @@ fun JmApp(vm: TaskViewModel) {
 }
 
 @Composable
-private fun FilterTabs(currentFilter: TaskFilter, onFilterChange: (TaskFilter) -> Unit) {
+private fun FilterTabs(currentFilter: TaskFilter, tabCounts: Map<TaskFilter, Int>, onFilterChange: (TaskFilter) -> Unit) {
     val themeColor = LocalThemeColor.current
+    val surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA),
-                RoundedCornerShape(12.dp)
-            )
+            .drawWithContent {
+                drawRoundRect(
+                    color = surfaceColor,
+                    cornerRadius = CornerRadius(12.dp.toPx())
+                )
+                drawContent()
+            }
     ) {
         val tabs = listOf(
             TaskFilter.ALL to "全部",
@@ -695,6 +710,7 @@ private fun FilterTabs(currentFilter: TaskFilter, onFilterChange: (TaskFilter) -
         )
         tabs.forEach { (filter, label) ->
             val isSelected = currentFilter == filter
+            val count = tabCounts[filter] ?: 0
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -710,6 +726,26 @@ private fun FilterTabs(currentFilter: TaskFilter, onFilterChange: (TaskFilter) -
                     maxLines = 1,
                     softWrap = false,
                 )
+                if (count > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 10.dp, y = (-6).dp)
+                            .background(
+                                color = if (isSelected) themeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "$count",
+                            color = MaterialTheme.colorScheme.onError,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1422,7 +1458,12 @@ private fun TaskRow(
                     )
                     when {
                         t.pageCount != null -> Text(
-                            if (t.currentPage != null) "已读 ${t.currentPage}/${t.pageCount} 页" else "共 ${t.pageCount} 页",
+                            if (t.currentPage != null) "已读 ${t.currentPage}/${t.pageCount} 页" else "已完成，共 ${t.pageCount} 页",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                        t.status == TaskStatus.DONE && t.total > 0 -> Text(
+                            "已完成，共 ${t.total} 页",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.secondary,
                         )
@@ -1523,7 +1564,7 @@ private fun ViewerScreen(task: Task, vm: TaskViewModel, onClose: () -> Unit, sna
                 else -> {
                     val initialPage = ((task.currentPage ?: 1) - 1).coerceAtLeast(0).coerceAtMost(list.size - 1)
                     val pager = rememberPagerState(initialPage = initialPage, pageCount = { list.size })
-                    val colState = rememberLazyListState(initialFirstVisibleItemIndex = initialPage)
+                    val colState = rememberLazyListState()
                     var controls by remember(task.id) { mutableStateOf(false) }
                     var webtoon by remember { mutableStateOf(settings.webtoonMode) }
                     val noRipple = remember { MutableInteractionSource() }
@@ -1532,12 +1573,21 @@ private fun ViewerScreen(task: Task, vm: TaskViewModel, onClose: () -> Unit, sna
                     ) { controls = !controls }
 
                     LaunchedEffect(webtoon) {
-                        if (webtoon) colState.scrollToItem(pager.currentPage)
-                        else pager.scrollToPage(colState.firstVisibleItemIndex)
+                        if (webtoon) colState.animateScrollToItem(pager.currentPage)
+                        else pager.animateScrollToPage(colState.firstVisibleItemIndex)
                     }
 
                     LaunchedEffect(initialPage) {
-                        if (webtoon) colState.scrollToItem(initialPage) else pager.scrollToPage(initialPage)
+                        if (webtoon) {
+                            colState.scrollToItem(initialPage)
+                            delay(300)
+                            val settled = colState.firstVisibleItemIndex
+                            if (settled != initialPage) {
+                                colState.animateScrollToItem(initialPage)
+                            }
+                        } else {
+                            pager.animateScrollToPage(initialPage)
+                        }
                     }
 
                     var showImageMenu by remember { mutableStateOf(false) }
@@ -1719,9 +1769,18 @@ private fun ViewerScreen(task: Task, vm: TaskViewModel, onClose: () -> Unit, sna
                             onGoTo = { i ->
                                 scope.launch {
                                     if (webtoon) {
-                                        colState.scrollToItem(i)
+                                        colState.animateScrollToItem(i)
                                     } else {
-                                        pager.scrollToPage(i)
+                                        pager.animateScrollToPage(i)
+                                    }
+                                }
+                            },
+                            onGoHome = {
+                                scope.launch {
+                                    if (webtoon) {
+                                        colState.animateScrollToItem(0)
+                                    } else {
+                                        pager.animateScrollToPage(0)
                                     }
                                 }
                             },
@@ -1750,10 +1809,12 @@ private fun ViewerControls(
     webtoon: Boolean,
     onModeChange: (Boolean) -> Unit,
     onGoTo: (Int) -> Unit,
+    onGoHome: () -> Unit,
 ) {
     val rowState = rememberLazyListState()
     val thumbPx = with(LocalDensity.current) { 46.dp.toPx() }.toInt()
     LaunchedEffect(currentIndex) {
+        delay(80)
         val i = currentIndex.coerceAtLeast(0)
         val li = rowState.layoutInfo
         val viewport = li.viewportEndOffset - li.viewportStartOffset
@@ -1774,6 +1835,9 @@ private fun ViewerControls(
             }
             TextButton(onClick = { onModeChange(true) }) {
                 Text("条漫", color = if (webtoon) Color.White else Color(0x88FFFFFF))
+            }
+            TextButton(onClick = onGoHome) {
+                Text("首页", color = Color(0xBBFFFFFF))
             }
             Spacer(Modifier.weight(1f))
         }

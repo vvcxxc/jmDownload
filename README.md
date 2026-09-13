@@ -216,23 +216,13 @@ APK 文件通常位于：
 - Debug: `app\build\outputs\apk\debug\app-debug.apk`
 - Release: `app\build\outputs\apk\release\app-release.apk`
 
-### 7. 更换应用图标
-
-**方法**：运行项目根目录的图标生成脚本：
-```bat
-python generate_icons.py
-```
-或双击运行 `生成图标.bat`。
-
-脚本会自动创建所有分辨率的图标文件到 `app/src/main/res/mipmap-*` 目录。
-
-### 8. 导入压缩包无提示
+### 7. 导入压缩包无提示
 
 **现象**：导入压缩包后没有任何反馈。
 
 **解决方案**：导入完成后会弹出 Snackbar 提示导入结果（成功数量、失败数量、重复跳过数量），同时日志中会记录详细信息。
 
-### 9. 删除任务后下载仍在继续
+### 8. 删除任务后下载仍在继续
 
 **现象**：删除正在下载的任务后，下载仍在后台继续。
 
