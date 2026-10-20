@@ -1,301 +1,342 @@
-# JM 下载 (Android)
+<p align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="112" alt="JM Downloader">
+</p>
 
-一个极简的安卓 JMComic 下载 App：输入车号 → 排队 → 逐个下载 → **一本一个 zip** 存到你选的目录。纯手机、直连 JM、流量可用，不依赖电脑。
+<h1 align="center">JM Downloader</h1>
 
-> **直接下载 APK**：[GitHub Releases](https://github.com/vvcxxc/jmcomic-qqbot-wrapper/releases/latest)  
-> 推送 `v*` 标签后，GitHub Actions 会自动构建 `JMComic-<tag>.apk` 并作为 Release 附件发布。
+<p align="center">
+  一个跑在 Android 手机上的 JMComic 下载器：输入车号 → 后台下载 → 自动打包 zip → 内置阅读器。
+</p>
 
-## 功能
+<p align="center">
+  <a href="https://github.com/vvcxxc/jmDownload/releases/latest"><img alt="Download APK" src="https://img.shields.io/github/v/release/vvcxxc/jmDownload?label=Download%20APK&logo=android&logoColor=white"></a>
+  <a href="https://github.com/vvcxxc/jmDownload/actions/workflows/android-release.yml"><img alt="Build" src="https://github.com/vvcxxc/jmDownload/actions/workflows/android-release.yml/badge.svg"></a>
+  <img alt="Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
+  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.0-7F52FF?logo=kotlin&logoColor=white">
+</p>
 
-- 输入框输车号（默认前缀 `JM`），也能直接粘贴带 `jm`/空格/链接的文本，自动识别车号。
-- 选择保存位置（系统文件夹选择器，权限持久化）。
-- 任务列表：先记录再**逐个串行下载**（前台服务，退到后台/锁屏也继续，流量可用）。
-- 每本下完打包成 `JM{车号}-{标题}.zip` 存到所选目录。失败可重试、可删除。
-- **下载重复校验**：输入 JM 号码后自动检查列表中是否有相同项目，根据状态提示或自动处理。
-- **状态筛选 Tab**：支持全部、已下载、下载中、下载失败四种筛选方式。
-- **本地导入**：支持从手机目录多选压缩包导入到任务列表。
-- **搜索**：支持按标题/作者关键词和 JM 号搜索，可单选或批量加入下载列表。
-- **阅读高亮**：列表项点击阅读后退出时，刚阅读的项会显示蓝色边框高亮。
-- **阅读器**：支持翻页/条漫两种模式、底部缩略图、页码滑块、长按保存单页、记忆上次阅读页；导入的 zip 会按文件名自然排序并忽略 `__MACOSX` 等垃圾文件。
-- **日志管理**：自动清除 7 天前的日志，新日志排在前面显示，日志文件大小有上限。
-- **长按保存**：预览时长按图片弹出选项菜单，点击保存可将图片保存到相册。
+## 📥 直接下载 APK
 
-## 技术
+**[下载最新版本 APK](https://github.com/vvcxxc/jmDownload/releases/latest)**
 
-- Kotlin + Jetpack Compose（Material3）。`minSdk 26`，`compileSdk/targetSdk 35`。
-- 下载引擎：[`io.github.jukomu:jmcomic-android-support`](https://central.sonatype.com/artifact/io.github.jukomu/jmcomic-android-support)（JM 移动 API，token 签名，无需梯子；图片下载 + 还原都由库完成，`AndroidImageProcessor` 用 Bitmap 还原）。
-- 无 Room/额外持久化依赖：任务列表用 `org.json` 存到私有目录；保存目录 URI 用 SharedPreferences。
-- 关键排除：`org.sejda.imageio:webp-imageio`（桌面 AWT 插件，安卓用不了）、`com.google.android:android`（老 stub）。
+- Release 页面：[github.com/vvcxxc/jmDownload/releases](https://github.com/vvcxxc/jmDownload/releases)
+- Release 附件：`JMComic-<tag>.apk`，约 2.7 MB
+- 安装：允许“未知来源”安装即可
 
-## 开发环境与工具链
+> **这是什么？** 这是一个 **Android 手机 App**，不是 QQ Bot。  
+> `main` 分支是 Android 下载器；原来的 QQ Bot 代码保留在 `qqbot` 分支。
 
-### 环境要求
+## ✨ 功能
 
-- **JDK**：Java 17 或更高版本
-- **Android SDK**：建议安装最新版本
-- **SDK 包**：`platform-tools`、`platforms;android-35`、`build-tools;35.0.0`
-- **Gradle**：使用项目内的 `gradlew.bat`（无需手动安装）
+- **车号输入**：支持纯数字、`JM350234`、带空格、链接、逗号/分号分隔多个车号，以及从文本中提取。
+- **后台下载**：前台服务 + 通知栏进度，退到后台/锁屏继续；可配置并发数（默认 3）。
+- **自动打包**：每本下载完打包成 `JM{车号}-{标题}.zip`，保存到选定目录。
+- **保存位置**：Android 10+ 默认 `Downloads/JMComic`，也支持 SAF 自选文件夹；Android 9 及以下需手动选一次。
+- **搜索**：支持标题/作者关键词和 JM 号搜索，搜索结果可直接加入下载列表。
+- **任务管理**：全部 / 未读 / 已下载 / 下载中 / 下载失败筛选，重复车号校验、失败重试、暂停/继续、批量删除。
+- **本地导入**：从手机目录多选 zip 导入任务列表；自动按文件名自然排序，忽略 `__MACOSX` 等垃圾文件。
+- **内置阅读器**：翻页 / 条漫模式、底部缩略图、页码滑块、页码跳转、长按保存单页、记忆上次阅读页。
+- **封面与日志**：任务封面预览；日志自动清理且限制文件大小。
+- **小体积 Release**：R8 + 资源压缩，Release APK 约 **2.7 MB**。
 
-### 环境配置
+## 🚀 快速上手
 
-确保系统环境变量中包含：
-- `JAVA_HOME`：指向 JDK 安装目录
-- `ANDROID_HOME`（可选）：指向 Android SDK 安装目录
+1. **安装**：从 [Releases](https://github.com/vvcxxc/jmDownload/releases/latest) 下载 `JMComic-<版本>.apk`，允许“未知来源”后安装。
+2. **首次打开**：Android 13+ 会请求通知权限（用于显示下载进度）；Android 10+ 默认保存到 `Downloads/JMComic`，也可以到「设置」里改目录。
+3. **添加任务**：在列表页输入框输入车号（如 `350234`、`JM350234`），点「添加」或键盘上的完成键。支持一次粘贴多个车号/链接。
+4. **等待完成**：添加后会自动切到「下载中」Tab；下载、打包完成后任务会出现在「已下载」Tab。
+5. **阅读或取文件**：点已完成的任务卡片用内置阅读器阅读；zip 同时保存在你选择的目录里。
 
-项目已配置使用腾讯镜像加速依赖下载，无需额外配置。
+## 📖 使用手册
 
-## 构建（无需 Android Studio）
+### 1. 主界面
 
-### 一键构建
-
-```bat
-build.bat
+```text
+┌─────────────────────────────────────┐
+│ 列表                       设置  选择 │
+├─────────────────────────────────────┤
+│ JM [ 输入车号 / 粘贴链接 ]      [添加] │
+├─────────────────────────────────────┤
+│ 全部   未读   已下载   下载中   下载失败 │
+├─────────────────────────────────────┤
+│ [封面] JM350234 · 标题                  │
+│        已完成，共 42 页    重试  删除   │
+│                                     │
+│                ……任务列表……             │
+├─────────────────────────────────────┤
+│              列表          搜索        │
+└─────────────────────────────────────┘
 ```
 
-该脚本会依次构建 debug 和 release 版本，并显示构建结果。
+| 控件 | 功能 |
+| --- | --- |
+| 顶部「设置」 | 打开设置弹窗：保存位置、本地导入、并发数、背景、主题色、规则说明、日志。 |
+| 顶部「选择」 | 有任务时出现，进入多选模式；可以全选、移动、批量删除。 |
+| 输入框 | 左侧固定显示 `JM`，默认弹出数字键盘；单行输入，粘贴链接/长文本也会保留完整内容。 |
+| 「添加」 | 解析输入并创建下载任务；输入为空时按钮不可点。添加后自动跳到「下载中」Tab。 |
+| 五个筛选 Tab | 切换任务列表的显示范围，右上角数字是各分类数量；规则见下方第 3 节。 |
+| 任务卡片 | 已下载完成的任务点一下打开阅读器；未完成的任务点击无反应。长按任意任务进入多选。 |
+| 底部「列表」 | 任务列表页（输入、筛选、下载管理）。 |
+| 底部「搜索」 | 打开关键词 / JM 号搜索页。 |
 
-### 单独构建
+> 添加成功或部分成功时输入框会自动清空；如果全部失败，也会清空并弹出具体原因。失败提示会通过底部 Snackbar 显示。
 
-构建 debug 版本：
+### 2. 输入框匹配规则
+
+输入框支持纯数字、JM 前缀、站内链接、分隔符批量、粘连 JM 号和普通文本提取。解析时按下面的优先级匹配：
+
+1. **JM 前缀**（最优先）：`JM` 不区分大小写，和数字之间可以有空格，数字至少 3 位。
+   - `350234` → `350234`
+   - `JM350234`、`jm350234` → `350234`
+   - `JM 350234` → `350234`
+2. **链接路径**：识别 `photo`、`photos`、`album`、`albums` 后面跟的数字。
+   - `https://example.com/photo/412038` → `412038`
+   - `https://example.com/albums/412038/` → `412038`
+3. **链接参数**：识别 `?id=` 或 `&id=` 后面的数字。
+   - `https://example.com/album?id=412038` → `412038`
+4. **普通文本提取**：以上都没匹配到时，把文本里的所有数字按出现顺序拼成一个编号。
+   - `老师们东方绀珠传游玩12次撞残50次重开558次成功通关` → `1250558`
+   - 因此纯数字输入实际上就是“文本提取”的特例。
+
+**多个车号**
+
+- 用中英文逗号或分号分隔：`350234, JM350235; JM 350236` → `350234`、`350235`、`350236`。
+- 每一段都可以是纯数字、JM 前缀或链接，顺序不限。
+- 多个带 `JM` 的编号粘在一起会自动拆分：`JM428980JM433633JM435515` → `428980`、`433633`、`435515`。
+- 同一段输入里的重复编号只添加一次：`123456, 123456` → `123456`。
+
+**边界与注意事项**
+
+- 纯数字 / 文本提取至少需要 3 位数字；`12`、`hello`、空输入都会提示“识别不到车号”。
+- 按分隔符拆开后，**只要有一段完全识别不到编号**，整段输入会退回“提取所有数字拼成一个编号”的规则。例如 `350234, abc` 只会得到 `350234` 一个任务。批量输入时请确保每一段都是有效车号。
+- 输入框虽然默认是数字键盘，但仍然可以直接粘贴链接或整段文字；手动输入纯数字最方便，左侧的 `JM` 只是视觉提示，不会自动拼进输入内容。要输入逗号、字母或链接时建议直接粘贴。
+
+**重复任务怎么处理**
+
+| 已存在的任务状态 | 再次添加同一车号时 |
+| --- | --- |
+| 已完成 | 跳过，提示 `JMxxx 已下载完成`。 |
+| 排队中 / 下载中 / 打包中 / 已暂停 | 跳过，提示 `JMxxx 已在列表中`。 |
+| 下载失败 | 不新建任务，直接把原任务重置为排队并重新下载。 |
+
+一次添加多个时，会汇总提示，例如“添加 2 个，JM350236 已下载完成”。部分成功不会回滚已经添加的任务。
+
+### 3. 任务 Tab 与列表操作
+
+| Tab | 显示内容 |
+| --- | --- |
+| 全部 | 只显示**已完成**和**下载失败**的任务，不显示排队中/下载中/打包中/已暂停。 |
+| 未读 | 已完成但还没打开过的任务（`currentPage` 为空）。进入该 Tab 时会固定当前未读列表，阅读返回后位置不会跳动。 |
+| 已下载 | 所有已完成任务，包括“部分图片失败但已打包保存”的任务。 |
+| 下载中 | 排队中、下载中、打包中和已暂停的任务；已暂停的任务排在最后。 |
+| 下载失败 | 下载失败的任务，以及已完成但有图片下载失败的任务。 |
+
+**任务卡片上的按钮**
+
+| 按钮/区域 | 功能 |
+| --- | --- |
+| 封面 | 有封面缓存时显示；点封面可全屏预览，点任意处关闭。 |
+| 标题 | 长按复制标题；普通点击在已下载状态下打开阅读器。 |
+| 「重试」 | 任务失败，或已完成但有图片失败时出现；旧 zip 会先删除，再把该本重新排队下载并打包。 |
+| 「下载」 | 仅在任务已暂停时出现，继续该任务。 |
+| 「暂停」 | 排队中、下载中、打包中时出现；暂停后会回到「下载中」Tab 末尾。 |
+| 「删除」 | 弹出确认框：有 zip 时可选择「只删任务」或「连文件一起删」；后者不可恢复。 |
+| 进度条 | 下载中显示已完成页数比例；打包阶段显示不确定进度条。 |
+| 「未读」角标 | 已完成但从未打开；打开阅读器并记录页码后消失。 |
+| 高亮边框 | 最近一次阅读的任务会用主题色描边，方便继续阅读。 |
+
+**多选模式**
+
+点顶部「选择」或长按任务进入多选，顶部会变为：
+
+| 按钮 | 功能 |
+| --- | --- |
+| 「取消」 | 退出多选并清空选择。 |
+| 「全选」 | 选中当前 Tab 里的全部任务（不是全部任务）；再点一次清空。 |
+| 「移动」 | 选择目标文件夹，把选中任务的 zip 复制过去并删除原文件；只处理已有 zip 的任务。 |
+| 「删除」 | 批量删除，确认框同样区分「只删任务」和「连文件一起删」。 |
+
+列表底部的批量按钮：
+
+- 「下载中」Tab 底部：「全部暂停」「全部继续」。
+- 「下载失败」Tab 底部：「全部清除」只删除失败任务记录，不删除 zip；「全部重试」重新排队当前列表里的失败任务。
+
+### 4. 内置阅读器
+
+在「已下载」Tab 点击任务卡片即可打开。首次打开会解压 zip，显示“解压中…”，之后会复用缓存。
+
+| 操作/按钮 | 功能 |
+| --- | --- |
+| 轻点图片 | 显示/隐藏上下控制栏（默认隐藏，方便全屏阅读）。 |
+| 顶部「关闭」 | 退出阅读器；也可以按系统返回键。 |
+| 顶部标题 | 长按复制完整标题。 |
+| 顶部页码 | 显示当前页 / 总页数。 |
+| 「翻页」 | 左右滑动翻页（一次一页）。适合正常漫画分页。 |
+| 「条漫」 | 上下连续滚动，适合长条图。切换模式时会保持当前页。 |
+| 「首页」 | 跳到第 1 页。 |
+| 「跳转」 | 输入页码后跳转，有效范围是 `1 - 总页数`；键盘完成键也可以直接跳。 |
+| 缩略图条 | 点任意缩略图跳到对应页；当前页有主题色边框，并自动滚动到中间。 |
+| 页码滑块 | 拖动后松手跳转；总页数为 1 时不显示。 |
+| 长按图片 | 弹出「保存图片」，把当前页保存到系统相册；点遮罩取消。 |
+
+- 阅读进度会在页面停稳后自动保存；再次打开会回到上次页码。
+- 「翻页 / 条漫」的选择会记住，下次打开沿用。
+- Android 9 及以下保存单页图片时会请求存储权限；Android 10+ 通过 MediaStore 保存。
+- 如果 zip 已被移动/删除，或文件 URI 失效，阅读器会提示打开失败。
+
+### 5. 搜索
+
+搜索页顶部有两个模式：
+
+| 模式 | 输入与结果 |
+| --- | --- |
+| 「标题·作者」 | 输入标题或作者关键词，回车或点搜索图标开始搜索；结果按页加载，底部「加载更多 (当前页/总页数)」继续。 |
+| 「JM号」 | 只能输入纯数字；输入 `JM350234` 或带其他字符会提示“JM号必须为纯数字”。搜索成功时只显示这一本。 |
+
+- 搜索结果会显示标题、作者标签（最多 3 个，其余显示 `+N`）和页数。
+- 点结果右下角「下载」把该本加入任务列表；加入成功后按钮变成「已加入」并禁用。
+- 只要任务列表里已经存在同一车号（包括失败、暂停的任务），按钮也会显示「已加入」；需要重下时请回列表点「重试」。
+- 关键词搜索翻页时会保留之前的结果；切换搜索模式会清空结果。
+- 搜索失败或没有结果时，页面会显示具体错误或“未找到结果”。
+
+### 6. 设置
+
+点右上角「设置」打开，各按钮功能如下：
+
+| 设置项 | 功能 |
+| --- | --- |
+| 保存位置 | 显示当前目录。默认是 `系统下载 / JMComic`（Android 10+ 的 `Downloads/JMComic`）。 |
+| 「自定义目录」/「更改目录」 | 打开系统文件夹选择器（SAF），授权后新任务保存到该目录；已有任务不受影响。 |
+| 「恢复默认」 | 仅在自定义过目录时出现，清空自定义目录，回到系统下载目录。 |
+| 「导入本地压缩包（ZIP）」 | 打开系统文件选择器，可多选 zip；按文件名识别 `JM<数字>`，没有 JM 号的用文件名作为 ID；成功导入为已完成任务，并复制到当前保存目录。重复车号或同名文件会跳过，结果用 Snackbar 汇总。导入完成后切到「已下载」Tab 查看。 |
+| 同时下载任务数 | 下拉选择 `1 - 5`，默认 3；修改后立即写入设置，影响后续调度。 |
+| 「自定义背景（颜色 / 图片）」 | 打开「主页背景」弹窗：「选择颜色」打开取色器，「选图片」进入系统裁剪（按屏幕比例），「恢复默认」清除背景，「关闭」返回设置。 |
+| 「选择主题色」 | 打开颜色选择器，拖动色相/明暗后点「确定」应用，「取消」放弃；按钮、Tab、进度条、选中边框等会使用新主题色。 |
+| 「规则说明」 | 在 App 内查看输入框和 Tab 的完整规则（与本文第 2、3 节一致）。 |
+| 「查看日志」 | 查看当前日志快照；支持「清空」「复制」和「关闭」。反馈问题时可以先复制日志。 |
+| 「关闭」 | 关闭设置弹窗。 |
+
+> **Android 9 及以下注意**：系统下载目录无法直接写入时，必须先到「设置 → 保存位置 → 自定义目录」选择一个可写文件夹，否则下载完成时会提示“请先在顶部选择保存目录”。
+
+### 7. 文件与数据
+
+- 下载完成后每本打包为 `JM{车号}-{标题}.zip`；标题会清理非法文件名字符。
+- 任务记录保存在 App 私有目录的 `tasks.json`，卸载 App 会丢失任务列表；已经保存的 zip 不会被卸载删除。
+- 阅读器只会保留当前打开这一本的解压缓存，切换到另一本时会清理旧缓存。
+- 封面缓存在 App 私有目录；删除任务不会自动删除封面缓存，但不会影响阅读。
+- 批量「移动」是“复制到目标目录 + 删除原文件”，目标目录已有同名文件时会自动生成不重复的文件名。
+
+## 🧱 项目结构
+
+```text
+app/src/main/java/com/jmdl/
+├── ui/        JmApp、SearchScreen、ViewerScreen、TaskRow、Dialogs、UiStyle
+├── data/      Task、TaskRepository、SettingsStore
+├── download/  DownloadService、Storage、Zipper、Notifications
+├── engine/    JmEngine（jmcomic 库封装）
+├── core/      JmIdParser、FilenameSanitizer、PageOrdering
+└── util/      AppLogger、CoverCache
+```
+
+## 🛠️ 构建
+
+环境要求：
+
+- JDK 17+
+- Android SDK 35（`platforms;android-35`、`build-tools;35.0.0`）
+- 使用项目自带 `gradlew.bat`，无需手动安装 Gradle
+
 ```bat
+REM Debug
 gradlew.bat :app:assembleDebug
-```
 
-构建 release 版本：
-```bat
+REM Release（R8 + 资源压缩）
 gradlew.bat :app:assembleRelease
-```
 
-### 产物位置
-
-- Debug APK：`app\build\outputs\apk\debug\app-debug.apk`
-- Release APK：`app\build\outputs\apk\release\app-release.apk`
-
-Release 默认启用 **R8 + 资源压缩**，APK 约 2.7 MB。jmcomic 库已通过 keep 规则保留；如果真机运行出现异常，可临时把 `app/build.gradle.kts` 里的 `isMinifyEnabled` / `isShrinkResources` 改回 `false` 排查。
-
-### 运行单元测试
-
-```bat
+REM 单元测试
 gradlew.bat :app:testDebugUnitTest
 ```
 
-目前覆盖 `JmIdParser`、`FilenameSanitizer` 和 `PageOrdering`（自然排序/垃圾文件过滤）。
+也可以直接双击：
 
-### 签名配置
+```text
+build.bat        Debug + Release
+一键打包.bat      Debug + Release，并打开输出目录
+```
 
-项目已配置签名信息，确保版本更新时可以正常覆盖安装：
+产物：
 
-- **签名文件位置**：`keystore/release.jks`
-- **配置文件**：`signing.properties`
-- **debug 版本**：使用系统默认 debug.keystore
-- **release 版本**：使用项目中的 release.jks
+```text
+app\build\outputs\apk\debug\app-debug.apk
+app\build\outputs\apk\release\app-release.apk
+```
 
-#### 构建 Release 版本
+> Release 默认开启 R8 和资源压缩。jmcomic 库已配置 keep 规则；如果特定设备出现异常，可以把 `app/build.gradle.kts` 里的 `isMinifyEnabled` / `isShrinkResources` 临时改为 `false` 排查。
+
+### 签名
+
+发布签名使用仓库内的：
+
+```text
+keystore/release.jks
+signing.properties
+```
+
+密码等配置见 `signing.properties`。
+
+## 🤖 GitHub Actions 自动发布 APK
+
+工作流：`.github/workflows/android-release.yml`
+
+- 推送到 `main`：构建 Release APK，上传为 Actions Artifact。
+- 推送 `v*` 标签：自动创建 GitHub Release，并把 `JMComic-<tag>.apk` 挂到 Release 附件。
+- Actions 页面也支持手动 `Run workflow`。
+
+发布新版本：
 
 ```bat
-gradlew.bat :app:assembleRelease
-```
-
-产物：`app\build\outputs\apk\release\app-release.apk`
-
-#### 签名信息（仅供参考）
-
-| 项目 | 值 |
-|-----|-----|
-| 密钥库文件 | `keystore/release.jks` |
-| 密钥库密码 | `android` |
-| 密钥别名 | `release` |
-| 密钥密码 | `android` |
-
-## 运行测试 APK
-
-如果要测试新包，推荐使用 `adb install -r` 替换安装，这样可以保留应用数据和任务列表：
-
-```bat
-adb install -r app\build\outputs\apk\debug\app-debug.apk
-```
-
-如果必须卸载旧包，App 内部数据会被清除，重装后任务列表会丢失。
-
-## 安装到手机
-
-- 把 `app-debug.apk` 传到手机点击安装（需允许“未知来源”），或
-- USB 连手机开 USB 调试后：`adb install -r app\build\outputs\apk\debug\app-debug.apk`
-
-## 首次使用
-
-1. 打开 App，允许通知。
-2. 点“保存位置 → 选择”，选一个文件夹（建议在内部存储新建一个，如 `Download/jm`）。
-3. 输入框输车号（如 `350234`）或粘贴链接 → “添加” → 自动开始下载。
-4. 下完在所选目录能看到 `JM{车号}-{标题}.zip`。
-
-## 常见问题与解决方案
-
-### 1. Release 构建失败 - 签名文件找不到
-
-**错误信息**：
-```
-Keystore file '...\app\keystore\release.jks' not found for signing config 'release'
-```
-
-**原因**：签名文件路径配置错误，Gradle 在 `app` 模块上下文中解析相对路径。
-
-**解决方案**：在 `app/build.gradle.kts` 中使用 `rootProject.file()` 确保从项目根目录解析路径：
-```kotlin
-storeFile = rootProject.file(keystoreProperties.getProperty("storeFile", "./keystore/release.jks"))
-```
-
-### 2. 编译错误 - Composable 调用不在正确上下文
-
-**错误信息**：
-```
-@Composable invocations can only happen from the context of a @Composable function
-```
-
-**原因**：`LocalContext.current` 在非 `@Composable` 上下文中使用（如点击事件 lambda 中）。
-
-**解决方案**：在 `@Composable` 函数开头获取 `LocalContext.current`，然后在其他地方使用：
-```kotlin
-@Composable
-fun MyComponent() {
-    val context = LocalContext.current  // 在 @Composable 上下文中获取
-    Button(onClick = {
-        // 使用 context，而不是直接使用 LocalContext.current
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    }) {
-        Text("Copy")
-    }
-}
-```
-
-### 3. 编译错误 - break/continue 在 inline lambda 中
-
-**错误信息**：
-```
-The feature "break continue in inline lambdas" is experimental and should be enabled explicitly
-```
-
-**原因**：`continue` 语句不能在 `runCatching` 等 lambda 内部使用。
-
-**解决方案**：将 `continue` 语句移到 lambda 外部，或使用其他控制流方式：
-```kotlin
-// 错误示例
-for (item in list) {
-    runCatching {
-        if (condition) continue  // 不能在 lambda 内使用 continue
-    }
-}
-
-// 正确示例
-for (item in list) {
-    if (condition) continue  // 在循环中直接使用
-    runCatching {
-        // 业务逻辑
-    }
-}
-```
-
-### 4. 同时构建 Debug 和 Release 版本失败
-
-**现象**：运行 `gradlew.bat :app:assembleDebug :app:assembleRelease` 时出现混乱或失败。
-
-**原因**：并行构建多个版本可能导致缓存冲突或资源竞争。
-
-**解决方案**：使用 `build.bat` 脚本，它会顺序构建两个版本：
-```bat
-build.bat
-```
-
-### 5. 签名文件不存在
-
-**错误信息**：
-```
-Keystore file 'keystore/release.jks' not found
-```
-
-**解决方案**：运行以下命令创建签名文件：
-```bat
-mkdir keystore
-keytool -genkey -v -keystore keystore/release.jks -alias release -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android,OU=Dev,O=JM,L=Beijing,S=Beijing,C=CN" -storepass android -keypass android
-```
-
-### 6. 构建成功但 APK 未生成
-
-**现象**：Gradle 显示 `BUILD SUCCESSFUL` 但找不到 APK 文件。
-
-**解决方案**：检查构建输出目录：
-```bat
-dir /s /b *.apk
-```
-APK 文件通常位于：
-- Debug: `app\build\outputs\apk\debug\app-debug.apk`
-- Release: `app\build\outputs\apk\release\app-release.apk`
-
-### 7. 导入压缩包无提示
-
-**现象**：导入压缩包后没有任何反馈。
-
-**解决方案**：导入完成后会弹出 Snackbar 提示导入结果（成功数量、失败数量、重复跳过数量），同时日志中会记录详细信息。
-
-### 8. 删除任务后下载仍在继续
-
-**现象**：删除正在下载的任务后，下载仍在后台继续。
-
-**解决方案**：删除任务时会自动检查是否正在下载，如果是则先取消下载再删除任务记录。
-
-## 打包脚本
-
-项目根目录提供了一键打包脚本：
-
-```bat
-一键打包.bat
-```
-
-该脚本会：
-1. 构建 Debug 版本
-2. 构建 Release 版本
-3. 自动打开输出目录
-
-脚本会在构建前先移走旧 APK，强制 Gradle 重新执行打包任务，避免所有任务 `UP-TO-DATE` 时 APK 修改时间不更新；构建结束后会打印两个 APK 的实际修改时间和大小。
-
-## GitHub 自动发布 APK
-
-工作流文件：`.github/workflows/android-release.yml`
-
-- 推送到 `main`：自动构建 Release APK，并作为 Actions Artifact 上传。
-- 推送 `v*` 标签：自动创建 GitHub Release，并把 `JMComic-<tag>.apk` 作为附件，任何人打开仓库的 **Releases** 页面即可直接下载。
-- 也可以在 GitHub 的 **Actions → Build Android APK → Run workflow** 手动触发。
-
-发布一个版本：
-
-```bat
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 构建完成后打开：
 
 ```text
-https://github.com/vvcxxc/jmcomic-qqbot-wrapper/releases/latest
+https://github.com/vvcxxc/jmDownload/releases/latest
 ```
 
-就能在 Release 附件里直接下载 APK。
+## ❓ 常见问题
 
-### 10. 重启后导入的文件无法读取
+**安装提示“未知来源”？**  
+在系统设置里允许当前浏览器/文件管理器安装未知应用。
 
-**现象**：从手机目录导入的压缩包，当时能正常预览，关闭 App 再打开后提示"无法读取文件"。
+**Android 9 及以下无法保存？**  
+到设置里选择一个可写的保存目录；Android 10+ 默认使用 `Downloads/JMComic`。
 
-**原因**：早期版本导入时直接存储了 SAF 文件选择器返回的临时 URI（如 `content://com.android.providers.downloads.documents/document/msf%3A...`），SAF 权限在 App 重启后失效，导致文件无法访问。
+**下载失败？**  
+先在日志里看错误；网络域名不通时库会自动轮换域名，也可以稍后重试。部分本子可能因源站限制失败。
 
-**解决方案**：当前版本已修复，导入文件时会自动复制到保存目录（用户选择的 SAF 树目录或默认 Downloads/JMComic 目录），存储持久化 URI。**注意**：旧版本导入的任务需删除后重新导入才能生效。
+**导入的 zip 页序不对？**  
+当前会按文件名自然排序，并跳过 `__MACOSX/._*` 垃圾文件。仍有问题可以在 Issue 里附上 zip 的文件名结构。
 
-### 11. 导入时同名文件被跳过
+**为什么仓库里还有 QQ Bot 代码？**  
+`main` 是 Android App；`qqbot` 分支保留原来的 QQ Bot 实现，两边独立。
 
-**现象**：导入压缩包时，如果任务列表中已有相同 JM 车号的任务，会跳过不导入。
+**任务列表存在哪？**  
+App 私有目录的 `tasks.json`；卸载 App 会清除。zip 本身在你选择的保存目录里。
 
-**解决方案**：如需重新导入，先删除列表中的旧任务，再导入即可。
+## 🧰 技术栈
 
-## 已知/待打磨
+- Kotlin + Jetpack Compose + Material 3
+- `minSdk 26`（Android 8.0），`compileSdk/targetSdk 35`
+- [jmcomic-android-support](https://central.sonatype.com/artifact/io.github.jukomu/jmcomic-android-support)：JM 移动 API、图片下载与还原
+- Coil：封面/阅读器图片加载
+- Foreground Service：后台下载
+- 无 Room：任务列表用 `org.json` 持久化，设置用 SharedPreferences
+- R8 + resource shrinking
 
-- 首次真机验证要确认：图片**未错位**（还原正确）、流量下能连通 JM、大本子内存表现。
-- 无 curl_cffi/梯子依赖；若某些网络下 API 域名不通，库会自动轮换域名。
+## ⚠️ 免责声明
+
+本项目仅用于个人学习、备份和阅读已合法获取的内容。请遵守你所在地区的法律法规，不要传播侵权内容。使用本项目产生的任何后果由使用者自行承担。
+
+
