@@ -3,19 +3,30 @@ package com.jmdl.util
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
 
 object AppLogger {
     private const val TAG = "JMDownload"
     private const val MAX_LINES = 400
-    private const val MAX_LOG_AGE_DAYS = 7
+    private const val MAX_LOG_AGE_DAYS = 7L
+    private const val TRIM_EVERY = 200
+
     private val entries = ConcurrentLinkedQueue<String>()
-    private val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-    private val dateParser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    private val fileTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+
+    // All disk writes are serialized on one daemon thread; callers never block on I/O.
+    private val writer = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "AppLogger").apply { isDaemon = true }
+    }
+
+    @Volatile
     private var logFile: File? = null
+    private var writesSinceTrim = 0
 
     fun init(context: Context) {
         logFile = File(context.filesDir, "app.log")
@@ -36,12 +47,10 @@ object AppLogger {
     }
 
     private fun filterOldLogs(lines: List<String>): List<String> {
-        val cutoffDate = Date(System.currentTimeMillis() - MAX_LOG_AGE_DAYS * 24 * 60 * 60 * 1000L)
+        val cutoff = LocalDate.now().minusDays(MAX_LOG_AGE_DAYS)
         return lines.filter { line ->
             try {
-                val dateStr = line.substring(0, 10)
-                val logDate = dateParser.parse(dateStr)
-                logDate != null && logDate.after(cutoffDate)
+                !LocalDate.parse(line.substring(0, 10)).isBefore(cutoff)
             } catch (_: Exception) {
                 true
             }
@@ -50,51 +59,53 @@ object AppLogger {
 
     fun i(message: String) {
         Log.i(TAG, message)
-        writeToFile(message)
+        write(message)
     }
 
     fun w(message: String, throwable: Throwable? = null) {
         Log.w(TAG, message, throwable)
         val fullMsg = if (throwable != null) "$message\n${throwable.stackTraceToString()}" else message
-        writeToFile("[WARN] $fullMsg")
+        write("[WARN] $fullMsg")
     }
 
     fun e(message: String, throwable: Throwable? = null) {
         Log.e(TAG, message, throwable)
         val fullMsg = if (throwable != null) "$message\n${throwable.stackTraceToString()}" else message
-        writeToFile("[ERROR] $fullMsg")
+        write("[ERROR] $fullMsg")
     }
 
-    fun logProgress(taskId: String, done: Int, total: Int, phase: String = "download") {
-        i("[$phase] task=$taskId done=$done total=$total at=${timestamp()}")
-    }
-
-    fun snapshot(): List<String> {
-        logFile?.let { file ->
-            if (file.exists()) {
-                return runCatching { file.readLines().takeLast(MAX_LINES).reversed() }.getOrDefault(entries.toList().reversed())
-            }
-        }
-        return entries.toList().reversed()
-    }
+    fun snapshot(): List<String> = entries.toList().reversed()
 
     fun clear() {
         entries.clear()
-        logFile?.delete()
+        val file = logFile
+        writer.execute {
+            writesSinceTrim = 0
+            runCatching { file?.delete() }
+        }
+        // Enqueued after the delete task, so the writer recreates the file in order.
         i("Log cleared")
     }
 
-    private fun writeToFile(message: String) {
-        val line = "${formatter.format(Date())} $message"
+    private fun write(message: String) {
+        val line = "${LocalDateTime.now().format(fileTime)} $message"
         entries.add(line)
         while (entries.size > MAX_LINES) entries.remove()
-        logFile?.let { file ->
-            runCatching {
-                file.parentFile?.mkdirs()
-                file.appendText(line + "\n")
+        val file = logFile ?: return
+        writer.execute { appendLine(file, line) }
+    }
+
+    private fun appendLine(file: File, line: String) {
+        runCatching {
+            file.parentFile?.mkdirs()
+            file.appendText(line + "\n")
+            // The in-memory queue is capped, but appending alone would let the file
+            // grow forever (progress logs are written several times per second).
+            writesSinceTrim++
+            if (writesSinceTrim >= TRIM_EVERY) {
+                writesSinceTrim = 0
+                file.writeText(entries.joinToString("\n") + "\n")
             }
         }
     }
-
-    private fun timestamp(): String = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
 }

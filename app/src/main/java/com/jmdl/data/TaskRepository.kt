@@ -30,8 +30,10 @@ class TaskRepository private constructor(private val file: File) {
             val list = ArrayList<Task>(arr.length())
 
             for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                list.add(deserializeTask(o))
+                // One malformed entry should not discard the whole task list.
+                runCatching { deserializeTask(arr.getJSONObject(i)) }
+                    .onSuccess { list.add(it) }
+                    .onFailure { AppLogger.e("Skipping malformed task at index $i", it) }
             }
 
             _tasks.value = list.map {
@@ -47,6 +49,15 @@ class TaskRepository private constructor(private val file: File) {
 
         } catch (e: Exception) {
             AppLogger.e("Failed to load tasks from: ${file.path}", e)
+            // Keep the broken file for manual recovery instead of overwriting it
+            // on the next persist().
+            runCatching {
+                if (file.exists()) {
+                    val backup = File(file.parentFile, "tasks.corrupt.json")
+                    file.copyTo(backup, overwrite = true)
+                    AppLogger.w("Backed up corrupt task file to ${backup.path}")
+                }
+            }
         }
     }
 
@@ -66,8 +77,10 @@ class TaskRepository private constructor(private val file: File) {
             fileUri = o.optString("fileUri").ifEmpty { null },
             createdAt = o.optLong("createdAt"),
             finishedAt = o.optLong("finishedAt").let { if (it > 0) it else null },
-            currentPage = o.optInt("currentPage").let { if (it >= 0) it else null },
-            pageCount = o.optInt("pageCount").let { if (it >= 0) it else null },
+            // Missing keys used to deserialize to 0, which made every legacy task look
+            // "read on page 0". Pages are 1-based here; -1 is the serialized null.
+            currentPage = o.optInt("currentPage", -1).takeIf { it >= 1 },
+            pageCount = o.optInt("pageCount", -1).takeIf { it >= 1 },
         )
     }
 
@@ -77,7 +90,14 @@ class TaskRepository private constructor(private val file: File) {
             for (t in _tasks.value) {
                 arr.put(serializeTask(t))
             }
-            file.writeText(arr.toString())
+            // Write-then-rename avoids leaving a truncated tasks.json if the process
+            // dies mid-write.
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            tmp.writeText(arr.toString())
+            if (!tmp.renameTo(file)) {
+                file.writeText(tmp.readText())
+                tmp.delete()
+            }
             AppLogger.i("Persisted ${_tasks.value.size} tasks to: ${file.path}")
         } catch (e: Exception) {
             AppLogger.e("Failed to persist tasks to: ${file.path}", e)
@@ -127,6 +147,9 @@ class TaskRepository private constructor(private val file: File) {
         AppLogger.i("Removed task: $id")
         persist()
     }
+
+    /** Persists the current snapshot; safe to call from a background thread. */
+    fun persistNow() = synchronized(lock) { persist() }
 
     fun byId(id: String): Task? = _tasks.value.firstOrNull { it.id == id }
 

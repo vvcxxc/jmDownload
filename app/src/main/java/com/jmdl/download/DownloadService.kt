@@ -14,6 +14,7 @@ import com.jmdl.data.TaskRepository
 import com.jmdl.data.TaskStatus
 import com.jmdl.engine.JmEngine
 import com.jmdl.util.AppLogger
+import com.jmdl.util.CoverCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,12 +46,13 @@ class DownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CANCEL) {
-            handleCancel(intent)
-            return START_NOT_STICKY
-        }
-        if (intent?.action == ACTION_PAUSE) {
-            handlePause(intent)
+        if (intent != null && (intent.action == ACTION_CANCEL || intent.action == ACTION_PAUSE)) {
+            // These commands arrive through startForegroundService(), so the service
+            // must be promoted even if its only job is to cancel/pause a worker.
+            Notifications.ensureChannel(this)
+            startForegroundCompat("准备下载…", "", 0, 0, indeterminate = true)
+            if (intent.action == ACTION_CANCEL) handleCancel(intent) else handlePause(intent)
+            if (!drainRunning && activeTaskIds.isEmpty()) stopSelfSafely()
             return START_NOT_STICKY
         }
 
@@ -70,11 +72,13 @@ class DownloadService : Service() {
             drainRunning = false
             AppLogger.i("Drain loop finished, drainRunning=false")
             if (repo.nextQueued() == null && activeTaskIds.isEmpty()) {
-                if (repo.tasks.value.any { it.status == TaskStatus.FAILED }) {
-                    updateNotif("下载完成", "有任务失败，点击查看详情", 0, 0, indeterminate = false)
-                } else {
-                    stopSelfSafely()
+                val hasFailed = repo.tasks.value.any { it.status == TaskStatus.FAILED }
+                if (repo.tasks.value.any { it.status == TaskStatus.DONE || it.status == TaskStatus.FAILED }) {
+                    notifyDone(if (hasFailed) "有任务失败，点击查看详情" else "所有任务已完成")
                 }
+                // Always stop: keeping a dataSync foreground service alive just because
+                // a task failed leaks the service (and its notification) indefinitely.
+                stopSelfSafely()
             }
         }
         return START_NOT_STICKY
@@ -149,12 +153,12 @@ class DownloadService : Service() {
         try {
             requireRunning(taskId)
             AppLogger.i("Task phase=TITLE taskId=$taskId jmId=$jmId")
-            val title = runWithTimeout(taskId) { JmEngine.getTitle(jmId) }
+            val title = runWithTimeout(taskId, TITLE_TIMEOUT_MS) { JmEngine.getTitle(jmId) }
             repo.update(taskId) { it.copy(title = title) }
 
             requireRunning(taskId)
             AppLogger.i("Task phase=DOWNLOAD taskId=$taskId jmId=$jmId title=$title")
-            val outcome = runWithTimeout(taskId) {
+            val outcome = runWithTimeout(taskId, DOWNLOAD_TIMEOUT_MS) {
                 var lastTick = 0L
                 var lastProgressAt = System.currentTimeMillis()
                 var lastReportedDone = 0
@@ -182,13 +186,14 @@ class DownloadService : Service() {
                             lastNotifUpdate = now
                             updateAggregateNotif()
                         }
-                        AppLogger.i("Download progress taskId=$taskId: $safeDone/$safeTotal")
                     }
 
                     if (safeDone > lastReportedDone || safeTotal != lastReportedTotal) {
                         lastProgressAt = now
                         lastReportedDone = safeDone
                         lastReportedTotal = safeTotal
+                        // Log per completed page instead of every 300ms tick.
+                        AppLogger.i("Download progress taskId=$taskId: $safeDone/$safeTotal")
                     }
 
                     if (now - lastProgressAt > STALLED_PROGRESS_MS) {
@@ -228,6 +233,7 @@ class DownloadService : Service() {
                 )
             }
             AppLogger.i("Download completed taskId=$taskId outcome=$outcome")
+            scope.launch { CoverCache.extractAndCache(this@DownloadService, saved.fileUri, jmId) }
 
         } catch (e: TimeoutException) {
             handleTimeout(taskId, e)
@@ -246,6 +252,9 @@ class DownloadService : Service() {
                     finishedAt = System.currentTimeMillis(),
                 )
             }
+            scope.launch {
+                existingUri?.let { uri -> CoverCache.extractAndCache(this@DownloadService, uri, jmId) }
+            }
         } catch (e: Exception) {
             handleError(taskId, e)
         } finally {
@@ -261,7 +270,7 @@ class DownloadService : Service() {
                 if (repo.isPaused(it.id)) {
                     it
                 } else {
-                    it.copy(status = TaskStatus.FAILED, message = e.message ?: "下载超时（超过 ${DOWNLOAD_TIMEOUT_MINUTES} 分钟）", finishedAt = System.currentTimeMillis())
+                    it.copy(status = TaskStatus.FAILED, message = e.message ?: "任务超时（长时间无响应）", finishedAt = System.currentTimeMillis())
                 }
             }
         } catch (ex: Exception) {
@@ -317,7 +326,7 @@ class DownloadService : Service() {
             .onFailure { AppLogger.w("Failed to delete workDir: ${workDir.path}", it) }
     }
 
-    private fun <T> runWithTimeout(taskId: String, action: () -> T): T {
+    private fun <T> runWithTimeout(taskId: String, timeoutMs: Long, action: () -> T): T {
         val executor = Executors.newSingleThreadExecutor()
         val future = executor.submit<T> {
             AppLogger.i("Worker thread entered taskId=$taskId")
@@ -326,7 +335,7 @@ class DownloadService : Service() {
         activeWorkers[taskId] = future
 
         try {
-            return future.get(DOWNLOAD_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (e: TimeoutException) {
             future.cancel(true)
             throw e
@@ -385,6 +394,11 @@ class DownloadService : Service() {
         mgr.notify(Notifications.NOTIF_ID, Notifications.build(this, title, text, done, total, indeterminate))
     }
 
+    private fun notifyDone(text: String) {
+        val mgr = getSystemService(NotificationManager::class.java) ?: return
+        mgr.notify(Notifications.DONE_NOTIF_ID, Notifications.buildDone(this, "下载完成", text))
+    }
+
     private fun stopSelfSafely() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -400,8 +414,11 @@ class DownloadService : Service() {
         private const val ACTION_CANCEL = "com.jmdl.CANCEL_TASK"
         private const val ACTION_PAUSE = "com.jmdl.PAUSE_TASK"
         private const val EXTRA_TASK_ID = "task_id"
-        private const val DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000L
-        private const val DOWNLOAD_TIMEOUT_MINUTES = 5
+        // A whole album can legitimately take much longer than 5 minutes on mobile
+        // data. The 60s no-progress watchdog still catches real stalls; this outer
+        // timeout is only a last-resort guard for a hung client.
+        private const val DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000L
+        private const val TITLE_TIMEOUT_MS = 2 * 60 * 1000L
         private const val STALLED_PROGRESS_MS = 60_000L
         @Volatile private var lastNotifUpdate = 0L
         private const val NOTIF_UPDATE_INTERVAL = 1000L

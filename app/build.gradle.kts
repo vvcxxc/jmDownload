@@ -32,7 +32,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-        multiDexEnabled = true
+        // minSdk 26 has native multidex; the flag is unnecessary.
     }
 
     buildTypes {
@@ -41,7 +41,8 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -95,6 +96,8 @@ dependencies {
 
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    testImplementation("junit:junit:4.13.2")
 
     // In-app image viewer (async loading + sampling; loads File/webp/jpg/png).
     implementation("io.coil-kt:coil-compose:2.7.0")

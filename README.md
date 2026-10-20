@@ -11,8 +11,10 @@
 - **下载重复校验**：输入 JM 号码后自动检查列表中是否有相同项目，根据状态提示或自动处理。
 - **状态筛选 Tab**：支持全部、已下载、下载中、下载失败四种筛选方式。
 - **本地导入**：支持从手机目录多选压缩包导入到任务列表。
+- **搜索**：支持按标题/作者关键词和 JM 号搜索，可单选或批量加入下载列表。
 - **阅读高亮**：列表项点击阅读后退出时，刚阅读的项会显示蓝色边框高亮。
-- **日志管理**：自动清除 7 天前的日志，新日志排在前面显示。
+- **阅读器**：支持翻页/条漫两种模式、底部缩略图、页码滑块、长按保存单页、记忆上次阅读页；导入的 zip 会按文件名自然排序并忽略 `__MACOSX` 等垃圾文件。
+- **日志管理**：自动清除 7 天前的日志，新日志排在前面显示，日志文件大小有上限。
 - **长按保存**：预览时长按图片弹出选项菜单，点击保存可将图片保存到相册。
 
 ## 技术
@@ -65,6 +67,16 @@ gradlew.bat :app:assembleRelease
 
 - Debug APK：`app\build\outputs\apk\debug\app-debug.apk`
 - Release APK：`app\build\outputs\apk\release\app-release.apk`
+
+Release 默认启用 **R8 + 资源压缩**，APK 约 2.7 MB。jmcomic 库已通过 keep 规则保留；如果真机运行出现异常，可临时把 `app/build.gradle.kts` 里的 `isMinifyEnabled` / `isShrinkResources` 改回 `false` 排查。
+
+### 运行单元测试
+
+```bat
+gradlew.bat :app:testDebugUnitTest
+```
+
+目前覆盖 `JmIdParser`、`FilenameSanitizer` 和 `PageOrdering`（自然排序/垃圾文件过滤）。
 
 ### 签名配置
 
@@ -240,6 +252,8 @@ APK 文件通常位于：
 1. 构建 Debug 版本
 2. 构建 Release 版本
 3. 自动打开输出目录
+
+脚本会在构建前先移走旧 APK，强制 Gradle 重新执行打包任务，避免所有任务 `UP-TO-DATE` 时 APK 修改时间不更新；构建结束后会打印两个 APK 的实际修改时间和大小。
 
 ### 10. 重启后导入的文件无法读取
 

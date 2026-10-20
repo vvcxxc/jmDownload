@@ -35,7 +35,18 @@ class MainActivity : ComponentActivity() {
             val granted = ContextCompat.checkSelfPermission(
                 this, Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            if (granted) return
+
+            // Ask once on first launch. Re-prompting on every launch is noisy,
+            // especially after the user has denied it.
+            val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+            if (prefs.getBoolean(KEY_NOTIF_ASKED, false)) return
+            prefs.edit().putBoolean(KEY_NOTIF_ASKED, true).apply()
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    private companion object {
+        const val KEY_NOTIF_ASKED = "notifPermissionAsked"
     }
 }

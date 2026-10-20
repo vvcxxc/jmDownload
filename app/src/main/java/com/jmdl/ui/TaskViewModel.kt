@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.graphics.Color
 import com.jmdl.core.JmIdParser
+import com.jmdl.core.PageOrdering
 import com.jmdl.data.SettingsStore
 import com.jmdl.data.Task
 import com.jmdl.data.TaskRepository
@@ -16,12 +17,15 @@ import com.jmdl.download.DownloadService
 import com.jmdl.download.Storage
 import com.jmdl.util.AppLogger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 class TaskViewModel(app: Application) : AndroidViewModel(app) {
@@ -219,8 +223,24 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         DownloadService.start(getApplication())
     }
 
+    private var pagePersistJob: Job? = null
+
     fun updatePage(taskId: String, page: Int, pageCount: Int) {
-        repo.update(taskId) { it.copy(currentPage = page, pageCount = pageCount) }
+        // The reader calls this on every page change. Writing tasks.json synchronously
+        // here would block the UI thread while flipping/swiping, so update the in-memory
+        // snapshot immediately and persist after the user stops turning pages.
+        repo.update(taskId, persist = false) { it.copy(currentPage = page, pageCount = pageCount) }
+        pagePersistJob?.cancel()
+        pagePersistJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(800)
+            repo.persistNow()
+        }
+    }
+
+    /** Writes the last page immediately when the viewer closes. */
+    fun flushPage() {
+        pagePersistJob?.cancel()
+        viewModelScope.launch(Dispatchers.IO) { repo.persistNow() }
     }
 
     fun removeWithFile(task: Task) {
@@ -308,8 +328,12 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 runCatching {
-                    val pageCount = countImagesInZip(app, uri)
-                    
+                    // If the URI is file-backed, reading the ZIP central directory is
+                    // much cheaper than decompressing every entry with ZipInputStream.
+                    val pageCount = Storage.localFileOf(app, uri)
+                        ?.let { local -> countImagesInZip(local) }
+                        ?: countImagesInZip(app, uri)
+
                     val saved = Storage.copyFileToSaveLocation(
                         app, uri, fileName, settings.saveTreeUri
                     )
@@ -358,6 +382,14 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         return regex.find(fileName)?.groupValues?.get(1)
     }
 
+    private fun countImagesInZip(file: File): Int? = runCatching {
+        ZipFile(file).use { zip ->
+            zip.entries().asSequence().count { entry ->
+                !entry.isDirectory && PageOrdering.isImageName(entry.name)
+            }
+        }
+    }.getOrNull()
+
     private fun countImagesInZip(context: Context, uri: Uri): Int {
         var count = 0
         runCatching {
@@ -365,7 +397,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 ZipInputStream(input).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
-                        if (!entry.isDirectory && isImageFile(entry.name)) {
+                        if (!entry.isDirectory && PageOrdering.isImageName(entry.name)) {
                             count++
                         }
                         zis.closeEntry()
@@ -375,11 +407,6 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         return count
-    }
-
-    private fun isImageFile(name: String): Boolean {
-        val ext = name.lowercase().substringAfterLast('.', "")
-        return ext in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
     }
 
     private fun uniqueDocName(dir: DocumentFile, name: String): String {

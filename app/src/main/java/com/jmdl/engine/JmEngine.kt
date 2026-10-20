@@ -2,6 +2,9 @@ package com.jmdl.engine
 
 import com.jmdl.util.AppLogger
 import io.github.jukomu.jmcomic.api.enums.ClientType
+import io.github.jukomu.jmcomic.api.model.JmAlbumMeta
+import io.github.jukomu.jmcomic.api.model.JmSearchPage
+import io.github.jukomu.jmcomic.api.model.SearchQuery
 import io.github.jukomu.jmcomic.core.JmComic
 import io.github.jukomu.jmcomic.core.client.impl.JmApiClient
 import io.github.jukomu.jmcomic.core.config.JmConfiguration
@@ -104,5 +107,17 @@ object JmEngine {
         }
         
         return safeDone to safeTotal
+    }
+
+    fun searchByAlbum(jmId: String): io.github.jukomu.jmcomic.api.model.JmAlbum {
+        return client().getAlbum(jmId)
+    }
+
+    fun searchByKeyword(keyword: String, page: Int = 1): JmSearchPage {
+        val query = SearchQuery.Builder()
+            .text(keyword)
+            .page(page)
+            .build()
+        return client().search(query)
     }
 }

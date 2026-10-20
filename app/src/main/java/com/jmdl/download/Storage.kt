@@ -14,6 +14,7 @@ import com.jmdl.data.Task
 import com.jmdl.util.AppLogger
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
 
 object Storage {
 
@@ -35,166 +36,100 @@ object Storage {
     }
 
     fun saveZip(context: Context, workDir: File, zipName: String, treeUri: String?): Saved {
-        if (treeUri != null) {
-            val dir = DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
-            if (dir?.findFile(zipName) != null) throw DuplicateFileException(zipName)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (downloadsFileExists(context, zipName)) throw DuplicateFileException(zipName)
-        }
-
+        checkDuplicate(context, zipName, treeUri)
         return when {
-            treeUri != null -> saveToTree(context, workDir, Uri.parse(treeUri), zipName)
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> saveToDownloads(context, workDir, zipName)
+            treeUri != null -> writeTreeFile(context, Uri.parse(treeUri), zipName) { out ->
+                Zipper.writeZip(workDir, out)
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> writeDownloadsFile(context, zipName) { out ->
+                Zipper.writeZip(workDir, out)
+            }
             else -> throw IllegalStateException("请先在顶部选择保存目录（安卓9及以下需手动选一次）")
         }
     }
 
-    private fun saveToTree(context: Context, workDir: File, tree: Uri, zipName: String): Saved {
-        val dir = DocumentFile.fromTreeUri(context, tree)
-            ?: run {
-                val error = "保存目录不可用，请重新选择"
-                AppLogger.e(error)
-                throw IllegalStateException(error)
-            }
-
-        if (!dir.canWrite()) {
-            val error = "没有保存目录的写入权限，请重新选择"
+    fun copyFileToSaveLocation(
+        context: Context,
+        sourceUri: Uri,
+        zipName: String,
+        treeUri: String?,
+    ): Saved {
+        checkDuplicate(context, zipName, treeUri)
+        val input = context.contentResolver.openInputStream(sourceUri) ?: run {
+            val error = "无法读取源文件: $sourceUri"
             AppLogger.e(error)
             throw IllegalStateException(error)
         }
-
-        val doc = dir.createFile("application/zip", zipName)
-            ?: run {
-                val error = "无法在保存目录创建文件"
-                AppLogger.e(error)
-                throw IllegalStateException(error)
-            }
-
-        try {
-            val out = context.contentResolver.openOutputStream(doc.uri)
-                ?: run {
-                    val error = "无法写入保存目录"
-                    AppLogger.e(error)
-                    throw IllegalStateException(error)
-                }
-
-            out.use { Zipper.writeZip(workDir, it) }
-            AppLogger.i("Saved zip to tree: ${doc.uri}")
-            return Saved(doc.uri.toString(), zipName)
-
-        } catch (e: Exception) {
-            AppLogger.e("Failed to save zip to tree: $zipName", e)
-            runCatching { doc.delete() }
-            throw e
-        }
-    }
-
-    @RequiresApi(Build.VERSION_CODES.Q)
-    private fun saveToDownloads(context: Context, workDir: File, zipName: String): Saved {
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, zipName)
-            put(MediaStore.Downloads.MIME_TYPE, "application/zip")
-            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$SUBDIR")
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-
-        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val uri = resolver.insert(collection, values)
-            ?: run {
-                val error = "无法在下载目录创建文件"
-                AppLogger.e(error)
-                throw IllegalStateException(error)
-            }
-
-        try {
-            val out = resolver.openOutputStream(uri)
-                ?: run {
-                    val error = "无法写入下载目录"
-                    AppLogger.e(error)
-                    throw IllegalStateException(error)
-                }
-
-            out.use { Zipper.writeZip(workDir, it) }
-
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-
-            AppLogger.i("Saved zip to downloads: $uri")
-            return Saved(uri.toString(), zipName)
-
-        } catch (e: Exception) {
-            AppLogger.e("Failed to save zip to downloads: $zipName", e)
-            runCatching { resolver.delete(uri, null, null) }
-            throw e
-        }
-    }
-
-    fun copyFileToSaveLocation(context: Context, sourceUri: Uri, zipName: String, treeUri: String?): Saved {
-        if (treeUri != null) {
-            val dir = DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
-            if (dir?.findFile(zipName) != null) throw DuplicateFileException(zipName)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (downloadsFileExists(context, zipName)) throw DuplicateFileException(zipName)
-        }
-
-        val input = context.contentResolver.openInputStream(sourceUri)
-            ?: run {
-                val error = "无法读取源文件: $sourceUri"
-                AppLogger.e(error)
-                throw IllegalStateException(error)
-            }
-
-        return input.use { inp ->
+        return input.use { source ->
             when {
-                treeUri != null -> copyToTree(context, inp, Uri.parse(treeUri), zipName)
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> copyToDownloads(context, inp, zipName)
+                treeUri != null -> writeTreeFile(context, Uri.parse(treeUri), zipName) { out ->
+                    source.copyTo(out)
+                }
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> writeDownloadsFile(context, zipName) { out ->
+                    source.copyTo(out)
+                }
                 else -> throw IllegalStateException("请先在顶部选择保存目录")
             }
         }
     }
 
-    private fun copyToTree(context: Context, input: InputStream, tree: Uri, zipName: String): Saved {
-        val dir = DocumentFile.fromTreeUri(context, tree)
-            ?: run {
-                val error = "保存目录不可用，请重新选择"
-                AppLogger.e(error)
-                throw IllegalStateException(error)
+    private fun checkDuplicate(context: Context, zipName: String, treeUri: String?) {
+        if (treeUri != null) {
+            if (DocumentFile.fromTreeUri(context, Uri.parse(treeUri))?.findFile(zipName) != null) {
+                throw DuplicateFileException(zipName)
             }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (downloadsFileExists(context, zipName)) throw DuplicateFileException(zipName)
+        }
+    }
 
+    private fun requireTreeDir(context: Context, tree: Uri): DocumentFile {
+        val dir = DocumentFile.fromTreeUri(context, tree) ?: run {
+            val error = "保存目录不可用，请重新选择"
+            AppLogger.e(error)
+            throw IllegalStateException(error)
+        }
         if (!dir.canWrite()) {
             val error = "没有保存目录的写入权限，请重新选择"
             AppLogger.e(error)
             throw IllegalStateException(error)
         }
+        return dir
+    }
 
-        val doc = dir.createFile("application/zip", zipName)
-            ?: run {
-                val error = "无法在保存目录创建文件"
-                AppLogger.e(error)
-                throw IllegalStateException(error)
-            }
-
+    private fun writeTreeFile(
+        context: Context,
+        tree: Uri,
+        zipName: String,
+        write: (OutputStream) -> Unit,
+    ): Saved {
+        val dir = requireTreeDir(context, tree)
+        val doc = dir.createFile("application/zip", zipName) ?: run {
+            val error = "无法在保存目录创建文件"
+            AppLogger.e(error)
+            throw IllegalStateException(error)
+        }
         try {
-            context.contentResolver.openOutputStream(doc.uri)?.use { out ->
-                input.copyTo(out)
-            } ?: run {
+            context.contentResolver.openOutputStream(doc.uri)?.use(write) ?: run {
                 val error = "无法写入保存目录"
                 AppLogger.e(error)
                 throw IllegalStateException(error)
             }
-            AppLogger.i("Copied file to tree: ${doc.uri}")
+            AppLogger.i("Saved zip to tree: ${doc.uri}")
             return Saved(doc.uri.toString(), zipName)
         } catch (e: Exception) {
-            AppLogger.e("Failed to copy file to tree: $zipName", e)
+            AppLogger.e("Failed to write zip to tree: $zipName", e)
             runCatching { doc.delete() }
             throw e
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun copyToDownloads(context: Context, input: InputStream, zipName: String): Saved {
+    private fun writeDownloadsFile(
+        context: Context,
+        zipName: String,
+        write: (OutputStream) -> Unit,
+    ): Saved {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, zipName)
@@ -202,32 +137,25 @@ object Storage {
             put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$SUBDIR")
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
-
         val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val uri = resolver.insert(collection, values)
-            ?: run {
-                val error = "无法在下载目录创建文件"
-                AppLogger.e(error)
-                throw IllegalStateException(error)
-            }
-
+        val uri = resolver.insert(collection, values) ?: run {
+            val error = "无法在下载目录创建文件"
+            AppLogger.e(error)
+            throw IllegalStateException(error)
+        }
         try {
-            resolver.openOutputStream(uri)?.use { out ->
-                input.copyTo(out)
-            } ?: run {
+            resolver.openOutputStream(uri)?.use(write) ?: run {
                 val error = "无法写入下载目录"
                 AppLogger.e(error)
                 throw IllegalStateException(error)
             }
-
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-
-            AppLogger.i("Copied file to downloads: $uri")
+            AppLogger.i("Saved zip to downloads: $uri")
             return Saved(uri.toString(), zipName)
         } catch (e: Exception) {
-            AppLogger.e("Failed to copy file to downloads: $zipName", e)
+            AppLogger.e("Failed to write zip to downloads: $zipName", e)
             runCatching { resolver.delete(uri, null, null) }
             throw e
         }
@@ -294,7 +222,7 @@ object Storage {
             AppLogger.w("使用 SAF 直接访问失败")
 
             AppLogger.i("尝试通过 MediaStore 查询获取文件")
-            val mediaStoreFile = getFileFromMediaStoreByDocumentUri(context, uri)
+            val mediaStoreFile = localFileOf(context, uri)
             if (mediaStoreFile != null) {
                 AppLogger.i("通过 MediaStore 查询成功")
                 return mediaStoreFile.inputStream()
@@ -311,7 +239,16 @@ object Storage {
         return "com.android.providers.downloads.documents" == uri.authority
     }
 
-    private fun getFileFromMediaStoreByDocumentUri(context: Context, uri: Uri): File? {
+    /**
+     * Best-effort resolution of a content URI to a local File. Used to read the ZIP
+     * central directory without decompressing/de-streaming the whole archive.
+     * Returns null when the URI is not file-backed or scoped storage forbids access.
+     */
+    fun localFileOf(context: Context, uri: Uri): File? {
+        if (uri.scheme == "file") return uri.path?.let { File(it) }?.takeIf { it.isFile }
+        val isDocument = runCatching { DocumentsContract.isDocumentUri(context, uri) }
+            .getOrDefault(false)
+        if (!isDocument) return null
         return try {
             val documentId = DocumentsContract.getDocumentId(uri)
             val split = documentId.split(":")
@@ -367,6 +304,12 @@ object Storage {
                     "raw" -> {
                         val file = File(id)
                         if (file.exists()) {
+                            return file
+                        }
+                    }
+                    "primary" -> {
+                        val file = File(Environment.getExternalStorageDirectory(), id)
+                        if (file.isFile) {
                             return file
                         }
                     }

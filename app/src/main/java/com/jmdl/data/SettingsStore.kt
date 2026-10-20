@@ -2,7 +2,7 @@ package com.jmdl.data
 
 import android.content.Context
 
-/** Tiny SharedPreferences wrapper for the single persisted setting: the SAF save-folder URI. */
+/** Tiny SharedPreferences wrapper for app settings (save folder, theme, reader mode, etc.). */
 class SettingsStore(context: Context) {
     private val prefs =
         context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)

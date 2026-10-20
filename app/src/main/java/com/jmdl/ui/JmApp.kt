@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,15 +21,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -41,6 +42,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,13 +50,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
@@ -63,88 +61,43 @@ import com.jmdl.data.Task
 import com.jmdl.data.TaskStatus
 import com.jmdl.download.DownloadService
 import com.jmdl.util.AppLogger
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import android.os.Build
 import android.provider.MediaStore
 import android.content.ContentValues
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Surface
 
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.documentfile.provider.DocumentFile
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.draw.alpha
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.jmdl.data.SettingsStore
-import com.jmdl.download.Storage
 import java.io.File
 import kotlinx.coroutines.Dispatchers
-import androidx.compose.animation.core.tween
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Slider
-import kotlin.math.roundToInt
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.border
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import kotlinx.coroutines.withContext
-import java.util.zip.ZipInputStream
 
 enum class TaskFilter {
     ALL, UNREAD, DONE, RUNNING, FAILED
 }
 
-private const val CARD_ALPHA = 0.8f
-
-private val LocalThemeColor = staticCompositionLocalOf { Color(0xFF2979FF) }
+internal val LocalThemeColor = staticCompositionLocalOf { Color(0xFF2979FF) }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -155,6 +108,7 @@ fun JmApp(vm: TaskViewModel) {
     val importResult by vm.importResult.collectAsStateWithLifecycle()
     val themeColor by vm.themeColor.collectAsStateWithLifecycle()
     val maxConcurrent by vm.maxConcurrent.collectAsStateWithLifecycle()
+    val cardSurface = appCardSurfaceColor()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
@@ -171,6 +125,7 @@ fun JmApp(vm: TaskViewModel) {
     var showThemeColor by remember { mutableStateOf(false) }
     var showInputRules by remember { mutableStateOf(false) }
     var currentFilter by remember { mutableStateOf(TaskFilter.ALL) }
+    var currentTab by remember { mutableIntStateOf(0) }
     var cropOutputUri by remember { mutableStateOf<Uri?>(null) }
     val listState = rememberLazyListState()
     val stickyUnreadIds = remember { mutableStateOf(setOf<String>()) }
@@ -372,7 +327,7 @@ fun JmApp(vm: TaskViewModel) {
                     TopAppBar(
                         title = { Text("已选 ${selected.size}") },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA)
+                            containerColor = cardSurface
                         ),
                         navigationIcon = {
                             TextButton(onClick = { selectionMode = false; selected = emptySet() }) {
@@ -394,13 +349,13 @@ fun JmApp(vm: TaskViewModel) {
                     )
                 } else {
                     TopAppBar(
-                        title = { Text("JM 下载") },
+                        title = { Text(if (currentTab == 0) "列表" else "搜索") },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA)
+                            containerColor = cardSurface
                         ),
                         actions = {
                             TextButton(onClick = { showSettings = true }) { Text("设置") }
-                            if (tasks.isNotEmpty()) {
+                            if (currentTab == 0 && tasks.isNotEmpty()) {
                                 TextButton(onClick = { selectionMode = true }) { Text("选择") }
                             }
                         },
@@ -408,18 +363,35 @@ fun JmApp(vm: TaskViewModel) {
                 }
             },
             snackbarHost = { SnackbarHost(snackbar) },
+            bottomBar = {
+                NavigationBar(
+                    containerColor = cardSurface,
+                ) {
+                    NavigationBarItem(
+                        selected = currentTab == 0,
+                        onClick = { currentTab = 0 },
+                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
+                        label = { Text("列表") }
+                    )
+                    NavigationBarItem(
+                        selected = currentTab == 1,
+                        onClick = { currentTab = 1 },
+                        icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        label = { Text("搜索") }
+                    )
+                }
+            },
         ) { padding ->
+            Box(Modifier.padding(padding).fillMaxSize()) {
             Column(
-                Modifier
-                    .padding(padding)
-                    .fillMaxSize()
-                    .padding(12.dp)
+                Modifier.fillMaxSize()
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp)
+                    .zIndex(if (currentTab == 0) 1f else 0f)
+                    .alpha(if (currentTab == 0) 1f else 0f)
             ) {
                 Card(
                     Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA)
-                    )
+                    colors = appCardColors()
                 ) {
                     Column(Modifier.padding(8.dp)) {
                         InputRow(
@@ -456,10 +428,7 @@ fun JmApp(vm: TaskViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(32.dp)
-                            .background(
-                                MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA),
-                                RoundedCornerShape(12.dp)
-                            )
+                            .background(cardSurface, CardShape)
                             .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
@@ -580,9 +549,17 @@ fun JmApp(vm: TaskViewModel) {
                     }
                 }
             }
+            Box(
+                Modifier.fillMaxSize()
+                    .zIndex(if (currentTab == 1) 1f else 0f)
+                    .alpha(if (currentTab == 1) 1f else 0f)
+            ) {
+                SearchScreen(vm = vm, snackbar = { scope.launch { snackbar.showSnackbar(it) } })
+            }
         }
     }
     }
+}
 
     pendingDelete?.let { task ->
         DeleteDialog(
@@ -689,7 +666,7 @@ fun JmApp(vm: TaskViewModel) {
 @Composable
 private fun FilterTabs(currentFilter: TaskFilter, tabCounts: Map<TaskFilter, Int>, onFilterChange: (TaskFilter) -> Unit) {
     val themeColor = LocalThemeColor.current
-    val surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA)
+    val surfaceColor = appCardSurfaceColor()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -733,7 +710,7 @@ private fun FilterTabs(currentFilter: TaskFilter, tabCounts: Map<TaskFilter, Int
                             .offset(x = 10.dp, y = (-6).dp)
                             .background(
                                 color = if (isSelected) themeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(8.dp)
+                                shape = SmallShape
                             )
                             .padding(horizontal = 4.dp, vertical = 1.dp),
                         contentAlignment = Alignment.Center
@@ -751,625 +728,6 @@ private fun FilterTabs(currentFilter: TaskFilter, tabCounts: Map<TaskFilter, Int
     }
 }
 
-@Composable
-private fun CompactDialog(
-    onDismissRequest: () -> Unit,
-    title: @Composable () -> Unit,
-    text: (@Composable () -> Unit)?,
-    confirmButton: @Composable () -> Unit,
-    dismissButton: (@Composable () -> Unit)? = null,
-) {
-    Dialog(onDismissRequest = onDismissRequest) {
-        Surface(
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-        ) {
-            Column(modifier = Modifier.padding(top = 20.dp, bottom = 8.dp)) {
-                Box(modifier = Modifier.padding(horizontal = 24.dp)) {
-                    title()
-                }
-                if (text != null) {
-                    Box(
-                        modifier = Modifier
-                            .padding(start = 24.dp, end = 14.dp, top = 8.dp, bottom = 4.dp)
-                    ) {
-                        text()
-                    }
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    dismissButton?.invoke()
-                    confirmButton()
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DeleteDialog(
-    task: Task,
-    canDeleteFile: Boolean,
-    onDismiss: () -> Unit,
-    onTaskOnly: () -> Unit,
-    onWithFile: () -> Unit,
-) {
-    val scrollState = rememberScrollState()
-    CompactDialog(
-        onDismissRequest = onDismiss,
-        title = { 
-            val label = if (task.jmId.all { it.isDigit() }) "JM${task.jmId}" else (task.title ?: task.jmId)
-            Text("删除「$label」") 
-        },
-        text = {
-            Text(
-                if (canDeleteFile)
-                    "已保存：${task.zipName}\n\n“只删任务”仅从列表移除，保留 zip；\n“连文件一起删”会把 zip 从保存目录删掉（不可恢复）。"
-                else
-                    "从列表中删除该任务？（没有已保存的文件）"
-            )
-        },
-        confirmButton = {
-            if (canDeleteFile) {
-                Row {
-                    TextButton(onClick = onTaskOnly) { Text("只删任务") }
-                    TextButton(
-                        onClick = onWithFile,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        ),
-                    ) { Text("连文件一起删") }
-                }
-            } else {
-                TextButton(onClick = onTaskOnly) { Text("删除") }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
-}
-
-@Composable
-private fun BatchDeleteDialog(
-    count: Int,
-    canDeleteFile: Boolean,
-    onDismiss: () -> Unit,
-    onTaskOnly: () -> Unit,
-    onWithFile: () -> Unit,
-) {
-    CompactDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("删除选中的 $count 项") },
-        text = {
-            Text(
-                if (canDeleteFile)
-                    "“只删任务”仅从列表移除，保留已保存的 zip；\n“连文件一起删”会把这些任务的 zip 一并删掉（不可恢复）。"
-                else
-                    "从列表中删除选中的 $count 项？"
-            )
-        },
-        confirmButton = {
-            if (canDeleteFile) {
-                Row {
-                    TextButton(onClick = onTaskOnly) { Text("只删任务") }
-                    TextButton(
-                        onClick = onWithFile,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        ),
-                    ) { Text("连文件一起删") }
-                }
-            } else {
-                TextButton(onClick = onTaskOnly) { Text("删除") }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SettingsDialog(
-    saveUri: String?,
-    themeColor: Color,
-    maxConcurrent: Int,
-    onPick: () -> Unit,
-    onReset: () -> Unit,
-    onOpenBackground: () -> Unit,
-    onShowLog: () -> Unit,
-    onImportLocal: () -> Unit,
-    onThemeColor: () -> Unit,
-    onShowRules: () -> Unit,
-    onMaxConcurrent: (Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val scrollState = rememberScrollState()
-    CompactDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("设置") },
-        text = {
-            Box(
-                modifier = Modifier
-                    .height(320.dp)
-                    .padding(end = 10.dp)
-                    .scrollHints(scrollState),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 10.dp)
-                        .verticalScroll(scrollState),
-                ) {
-                Text("保存位置", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    saveUri?.let { prettyUri(it) } ?: "系统下载 / JMComic（默认）",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (saveUri != null) {
-                        TextButton(onClick = onReset) { Text("恢复默认") }
-                        Spacer(Modifier.width(4.dp))
-                    }
-                    Button(
-                        onClick = onPick,
-                        colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                    ) {
-                        Text(if (saveUri == null) "自定义目录" else "更改目录")
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("本地导入", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = onImportLocal,
-                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                ) { Text("导入本地压缩包（ZIP）") }
-                Spacer(Modifier.height(10.dp))
-                Text("同时下载任务数", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                var dropdownExpanded by remember { mutableStateOf(false) }
-                val options = (1..5).toList()
-                ExposedDropdownMenuBox(
-                    expanded = dropdownExpanded,
-                    onExpandedChange = { dropdownExpanded = it },
-                ) {
-                    OutlinedTextField(
-                        value = "$maxConcurrent",
-                        onValueChange = {},
-                        readOnly = true,
-                        modifier = Modifier
-                            .width(240.dp)
-                            .menuAnchor(),
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
-                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(
-                            focusedBorderColor = themeColor,
-                        ),
-                    )
-                    ExposedDropdownMenu(
-                        expanded = dropdownExpanded,
-                        onDismissRequest = { dropdownExpanded = false },
-                    ) {
-                        options.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text("$option") },
-                                onClick = {
-                                    onMaxConcurrent(option)
-                                    dropdownExpanded = false
-                                },
-                                contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("主页背景", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = onOpenBackground,
-                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                ) { Text("自定义背景（颜色 / 图片）") }
-                Spacer(Modifier.height(10.dp))
-                Text("主题色", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(24.dp)
-                            .background(themeColor, RoundedCornerShape(4.dp))
-                            .border(1.dp, Color(0x33000000), RoundedCornerShape(4.dp))
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = onThemeColor,
-                        colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                    ) { Text("选择主题色") }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("规则说明", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = onShowRules,
-                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                ) { Text("规则说明") }
-                Spacer(Modifier.height(8.dp))
-                Text("日志", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = onShowLog,
-                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                ) { Text("查看日志") }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
-}
-
-@Composable
-private fun InputRulesDialog(onDismiss: () -> Unit) {
-    val scrollState = rememberScrollState()
-    val rules = """
-输入框默认弹出数字键盘，支持以下输入方式：
-
-1. 单个编号
-   直接输入数字，如：350234
-   带 JM 前缀，如：JM350234（JM 不分大小写，jm350234 同样有效）
-   JM 和数字间可有空格，如：JM 350234
-
-2. 多个编号（分隔符）
-   中英文逗号或分号分隔，如：
-   350234, JM350235; JM 350236
-   每个编号可以是纯数字或带 JM 前缀
-
-3. 粘连编号（无分隔符）
-   多个 JM 编号连在一起会自动拆分，如：
-   JM428980JM433633JM435515
-   → 识别为 428980、433633、435515
-
-4. 文本提取
-   输入带中文描述的文本，自动提取所有数字拼接为一个编号：
-   "老师们东方绀珠传游玩12次撞残50次重开558次成功通关" → 1250558
-
-5. 自动去重
-   同一编号出现多次只添加一次
-
-Tab 显示规则：
-
-1. 全部
-    显示已下载完成和下载失败的任务，不显示排队中或正在下载的任务
-
-2. 未读
-    显示已下载完成但尚未打开阅读的任务。进入未读 Tab 时会固定当前未读列表，避免阅读返回后任务位置变化
-
-3. 已下载
-    显示已下载完成的任务，包括部分图片下载失败但已经打包保存的任务
-
-4. 下载中
-    显示排队中、下载中、打包中和已暂停的任务
-
-5. 下载失败
-    显示下载失败的任务，以及已下载完成但有图片下载失败的任务
-    """.trimIndent()
-
-    CompactDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("规则说明") },
-        text = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(320.dp)
-                    .padding(end = 10.dp)
-                    .scrollHints(scrollState),
-            ) {
-                Text(
-                    rules,
-                    style = MaterialTheme.typography.bodySmall,
-                    lineHeight = MaterialTheme.typography.bodySmall.lineHeight,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 10.dp)
-                        .verticalScroll(scrollState),
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
-    )
-}
-
-@Composable
-private fun Modifier.scrollHints(scrollState: ScrollState): Modifier {
-    val density = LocalDensity.current
-    val indicatorColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-    val fadeHeight = with(density) { 18.dp.toPx() }
-    val thumbMinHeight = with(density) { 24.dp.toPx() }
-    val thumbWidth = with(density) { 3.dp.toPx() }
-    val thumbInset = with(density) { 8.dp.toPx() }
-    return drawWithContent {
-        drawContent()
-        if (scrollState.maxValue > 0) {
-            val contentHeight = size.height + scrollState.maxValue
-            val thumbHeight = (size.height * size.height / contentHeight)
-                .coerceAtLeast(thumbMinHeight)
-                .coerceAtMost(size.height)
-            val scrollFraction = scrollState.value.toFloat() / scrollState.maxValue
-            val thumbTop = (size.height - thumbHeight) * scrollFraction
-            val right = size.width - thumbWidth - thumbInset
-
-            if (scrollState.value > 0) {
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        listOf(Color.Transparent, indicatorColor.copy(alpha = 0.12f))
-                    ),
-                    topLeft = Offset.Zero,
-                    size = Size(size.width, fadeHeight),
-                )
-            }
-            if (scrollState.value < scrollState.maxValue) {
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        listOf(indicatorColor.copy(alpha = 0.12f), Color.Transparent)
-                    ),
-                    topLeft = Offset(0f, size.height - fadeHeight),
-                    size = Size(size.width, fadeHeight),
-                )
-            }
-            drawRoundRect(
-                color = indicatorColor,
-                topLeft = Offset(right, thumbTop),
-                size = Size(thumbWidth, thumbHeight),
-                cornerRadius = CornerRadius(thumbWidth, thumbWidth),
-            )
-        }
-    }
-}
-
-@Composable
-private fun LogDialog(onDismiss: () -> Unit) {
-    var text by remember { mutableStateOf(AppLogger.snapshot().joinToString(separator = "\n")) }
-    val context = LocalContext.current
-    LaunchedEffect(Unit) {
-        text = AppLogger.snapshot().joinToString(separator = "\n")
-    }
-    CompactDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("日志") },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier.fillMaxWidth().height(320.dp),
-                readOnly = true,
-                singleLine = false,
-            )
-        },
-        confirmButton = {
-            Row {
-                TextButton(onClick = { AppLogger.clear(); text = "" }) { Text("清空") }
-                TextButton(onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = ClipData.newPlainText("log", text)
-                    clipboard.setPrimaryClip(clip)
-                }) { Text("复制") }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
-}
-
-@Composable
-private fun ColorPickerPanel(
-    currentColor: Color,
-    onColorChange: (Color) -> Unit,
-) {
-    val density = LocalDensity.current
-    val hsv = remember { FloatArray(3) }
-    android.graphics.Color.RGBToHSV(
-        (currentColor.red * 255).toInt(),
-        (currentColor.green * 255).toInt(),
-        (currentColor.blue * 255).toInt(),
-        hsv
-    )
-    var hue by remember { mutableFloatStateOf(hsv[0]) }
-    var sat by remember { mutableFloatStateOf(hsv[1]) }
-    var bri by remember { mutableFloatStateOf(hsv[2]) }
-
-    var sbSize by remember { mutableStateOf(IntSize.Zero) }
-    var hueSize by remember { mutableStateOf(IntSize.Zero) }
-
-    fun updateColor(h: Float, s: Float, v: Float) {
-        hue = h; sat = s; bri = v
-        onColorChange(Color.hsv(h, s, v))
-    }
-
-    val sbIndicatorDp = 12.dp
-    val sbIndicatorPx = with(density) { sbIndicatorDp.toPx() }.toInt()
-    val hueIndicatorDp = 6.dp
-    val hueIndicatorPx = with(density) { hueIndicatorDp.toPx() }.toInt()
-
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .onSizeChanged { sbSize = it }
-                .clip(RoundedCornerShape(8.dp))
-                .pointerInput(hue) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        var pos = down.position
-                        val s = (pos.x / size.width).coerceIn(0f, 1f)
-                        val v = 1f - (pos.y / size.height).coerceIn(0f, 1f)
-                        updateColor(hue, s, v)
-                        do {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull() ?: break
-                            if (!change.pressed) break
-                            pos = change.position
-                            val s2 = (pos.x / size.width).coerceIn(0f, 1f)
-                            val v2 = 1f - (pos.y / size.height).coerceIn(0f, 1f)
-                            updateColor(hue, s2, v2)
-                            change.consume()
-                        } while (true)
-                    }
-                }
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(hue, 1f, 1f))))
-                drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
-            }
-            if (sbSize.width > 0 && sbSize.height > 0) {
-                Box(
-                    Modifier
-                        .offset {
-                            IntOffset(
-                                x = (sat * (sbSize.width - sbIndicatorPx)).toInt(),
-                                y = ((1f - bri) * (sbSize.height - sbIndicatorPx)).toInt(),
-                            )
-                        }
-                        .size(sbIndicatorDp)
-                        .background(Color.White, CircleShape)
-                        .border(2.dp, Color.Black, CircleShape)
-                )
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(22.dp)
-                .onSizeChanged { hueSize = it }
-                .clip(RoundedCornerShape(4.dp))
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        var pos = down.position
-                        val h = (pos.x / size.width).coerceIn(0f, 1f) * 360f
-                        updateColor(h, sat, bri)
-                        do {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull() ?: break
-                            if (!change.pressed) break
-                            pos = change.position
-                            val h2 = (pos.x / size.width).coerceIn(0f, 1f) * 360f
-                            updateColor(h2, sat, bri)
-                            change.consume()
-                        } while (true)
-                    }
-                }
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val colors = (0..360 step 30).map { Color.hsv(it.toFloat(), 1f, 1f) }
-                drawRect(Brush.horizontalGradient(colors))
-            }
-            if (hueSize.width > 0) {
-                Box(
-                    Modifier
-                        .offset {
-                            IntOffset(
-                                x = ((hue / 360f) * (hueSize.width - hueIndicatorPx)).toInt(),
-                                y = 0,
-                            )
-                        }
-                        .width(hueIndicatorDp)
-                        .height(22.dp)
-                        .background(Color.White, RoundedCornerShape(3.dp))
-                        .border(1.dp, Color.Black, RoundedCornerShape(3.dp))
-                )
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        val previewColor = Color.hsv(hue, sat, bri)
-        Box(
-            Modifier
-                .size(36.dp)
-                .background(previewColor, RoundedCornerShape(6.dp))
-                .border(1.dp, Color(0x33000000), RoundedCornerShape(6.dp))
-        )
-    }
-}
-
-@Composable
-private fun ColorPickerDialog(
-    title: String,
-    initialColor: Color,
-    onColor: (Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var color by remember { mutableStateOf(initialColor) }
-    CompactDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            ColorPickerPanel(
-                currentColor = color,
-                onColorChange = { color = it },
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onColor(color.toArgb()); onDismiss() }) { Text("确定") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
-}
-
-@Composable
-private fun BackgroundDialog(
-    themeColor: Color,
-    onPickImage: () -> Unit,
-    onColor: (Int) -> Unit,
-    onReset: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var showColorPicker by remember { mutableStateOf(false) }
-    CompactDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("主页背景") },
-        text = {
-            Column {
-                Text("背景颜色", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { showColorPicker = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                ) { Text("选择颜色") }
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = onPickImage,
-                        colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                    ) { Text("选图片") }
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = onReset) { Text("恢复默认") }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-    )
-    if (showColorPicker) {
-        ColorPickerDialog(
-            title = "选择背景颜色",
-            initialColor = Color.White,
-            onColor = onColor,
-            onDismiss = { showColorPicker = false },
-        )
-    }
-}
 
 @Composable
 private fun InputRow(value: String, onValueChange: (String) -> Unit, onAdd: () -> Unit) {
@@ -1379,6 +737,7 @@ private fun InputRow(value: String, onValueChange: (String) -> Unit, onAdd: () -
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.weight(1f),
+            placeholder = { Text("JM号快捷下载", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
             singleLine = true,
             leadingIcon = { Text("JM", style = MaterialTheme.typography.titleMedium) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, keyboardType = KeyboardType.Number),
@@ -1393,557 +752,11 @@ private fun InputRow(value: String, onValueChange: (String) -> Unit, onAdd: () -
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun TaskRow(
-    t: Task,
-    isLastViewed: Boolean,
-    selectionMode: Boolean,
-    selected: Boolean,
-    onOpen: () -> Unit,
-    onToggleSelect: () -> Unit,
-    onEnterSelect: () -> Unit,
-    onCopyTitle: (String) -> Unit,
-    onRetry: () -> Unit,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    val themeColor = LocalThemeColor.current
-    val openable = t.status == TaskStatus.DONE && t.zipName != null
-    val unread = t.status == TaskStatus.DONE && t.currentPage == null
-    Box {
-        Card(
-        Modifier
-            .fillMaxWidth()
-            .border(
-                width = if (isLastViewed) 2.dp else 0.dp,
-                color = if (isLastViewed) themeColor else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .combinedClickable(
-                onClick = { if (selectionMode) onToggleSelect() else if (openable) onOpen() },
-                onLongClick = { if (!selectionMode) onEnterSelect() },
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = CARD_ALPHA)
-        )
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (selectionMode) {
-                    Checkbox(
-                        checked = selected,
-                        onCheckedChange = { onToggleSelect() },
-                        colors = CheckboxDefaults.colors(checkedColor = themeColor),
-                    )
-                    Spacer(Modifier.width(4.dp))
-                }
-                Column(Modifier.weight(1f)) {
-                    val displayName = if (t.jmId.all { it.isDigit() }) "JM${t.jmId}" else t.title ?: t.jmId
-                    val copyTitle = t.title ?: "JM${t.jmId}"
-                    Text(
-                        displayName + (t.title?.let { if (t.jmId.all { it.isDigit() }) " · $it" else "" } ?: ""),
-                        style = MaterialTheme.typography.bodyLarge,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.pointerInput(copyTitle) {
-                            detectTapGestures(onLongPress = { onCopyTitle(copyTitle) })
-                        },
-                    )
-                    Text(
-                        statusText(t),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = statusColor(t),
-                    )
-                    when {
-                        t.pageCount != null -> Text(
-                            if (t.currentPage != null) "已读 ${t.currentPage}/${t.pageCount} 页" else "已完成，共 ${t.pageCount} 页",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                        t.status == TaskStatus.DONE && t.total > 0 -> Text(
-                            "已完成，共 ${t.total} 页",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                        t.status == TaskStatus.DONE -> Text(
-                            "已完成",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                        )
-                    }
-                }
-                if (!selectionMode) {
-                    if (t.status == TaskStatus.FAILED || (t.status == TaskStatus.DONE && t.failed > 0)) {
-                        TextButton(onClick = onRetry) { Text("重试") }
-                    }
-                    if (t.status == TaskStatus.PAUSED) {
-                        TextButton(onClick = onResume) { Text("下载") }
-                    }
-                    if (t.status == TaskStatus.QUEUED || t.status == TaskStatus.RUNNING || t.status == TaskStatus.ZIPPING) {
-                        TextButton(onClick = onPause) { Text("暂停") }
-                    }
-                    TextButton(onClick = onRemove) { Text("删除") }
-                }
-            }
-            when {
-                t.status == TaskStatus.RUNNING && t.total > 0 -> {
-                    Spacer(Modifier.height(6.dp))
-                    LinearProgressIndicator(
-                        progress = { t.done.toFloat() / t.total.toFloat() },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = themeColor,
-                    )
-                }
-                t.status == TaskStatus.RUNNING || t.status == TaskStatus.ZIPPING -> {
-                    Spacer(Modifier.height(6.dp))
-                    LinearProgressIndicator(Modifier.fillMaxWidth(), color = themeColor)
-                }
-            }
-        }
-    }
-    if (unread) {
-        Surface(
-            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
-            shape = RoundedCornerShape(6.dp),
-            color = themeColor,
-            shadowElevation = 2.dp,
-        ) {
-            Text(
-                "未读",
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-    }
-    }
-}
-
-@Composable
-private fun ViewerScreen(task: Task, vm: TaskViewModel, onClose: () -> Unit, snackbar: SnackbarHostState) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val settings = remember { SettingsStore(context) }
-    var files by remember(task.id) { mutableStateOf<List<File>?>(null) }
-    var error by remember(task.id) { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(task.id) {
-        val r = withContext(Dispatchers.IO) { runCatching { extractForView(context, task) } }
-        r.onSuccess { files = it }.onFailure { error = it.message ?: "打开失败" }
-    }
-    DisposableEffect(task.id) {
-        onDispose { runCatching { File(context.cacheDir, "view").deleteRecursively() } }
-    }
-    BackHandler { onClose() }
-
-    Surface(Modifier.fillMaxSize(), color = Color.Black) {
-        Box(Modifier.fillMaxSize()) {
-            val list = files
-            when {
-                error != null -> Text(
-                    error ?: "打开失败",
-                    color = Color.White,
-                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                )
-                list == null -> Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    CircularProgressIndicator(color = Color.White)
-                    Spacer(Modifier.height(10.dp))
-                    Text("解压中…", color = Color.White)
-                }
-                list.isEmpty() -> Text(
-                    "没有可显示的图片",
-                    color = Color.White,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-                else -> {
-                    val initialPage = ((task.currentPage ?: 1) - 1).coerceAtLeast(0).coerceAtMost(list.size - 1)
-                    val pager = rememberPagerState(initialPage = initialPage, pageCount = { list.size })
-                    val colState = rememberLazyListState()
-                    var controls by remember(task.id) { mutableStateOf(false) }
-                    var webtoon by remember { mutableStateOf(settings.webtoonMode) }
-                    val noRipple = remember { MutableInteractionSource() }
-                    val toggle = Modifier.clickable(
-                        interactionSource = noRipple, indication = null,
-                    ) { controls = !controls }
-
-                    LaunchedEffect(webtoon) {
-                        if (webtoon) colState.animateScrollToItem(pager.currentPage)
-                        else pager.animateScrollToPage(colState.firstVisibleItemIndex)
-                    }
-
-                    LaunchedEffect(initialPage) {
-                        if (webtoon) {
-                            colState.scrollToItem(initialPage)
-                            delay(300)
-                            val settled = colState.firstVisibleItemIndex
-                            if (settled != initialPage) {
-                                colState.animateScrollToItem(initialPage)
-                            }
-                        } else {
-                            pager.animateScrollToPage(initialPage)
-                        }
-                    }
-
-                    var showImageMenu by remember { mutableStateOf(false) }
-                    var imageToSave by remember { mutableStateOf<String?>(null) }
-
-                    val saveImage = { filePath: String ->
-                        val file = File(filePath)
-                        if (file.exists()) {
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val contentValues = ContentValues().apply {
-                                        put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
-                                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                            put(MediaStore.Images.Media.IS_PENDING, 1)
-                                        }
-                                    }
-                                    
-                                    val uri = context.contentResolver.insert(
-                                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                        contentValues
-                                    )
-                                    
-                                    uri?.let {
-                                        context.contentResolver.openOutputStream(it)?.use { outputStream ->
-                                            file.inputStream().use { inputStream ->
-                                                inputStream.copyTo(outputStream)
-                                            }
-                                        }
-                                        
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                                            context.contentResolver.update(uri, contentValues, null, null)
-                                        }
-                                    }
-                                    
-                                    scope.launch(Dispatchers.Main) {
-                                        snackbar.showSnackbar("图片已保存到相册")
-                                    }
-                                } catch (e: Exception) {
-                                    AppLogger.e("Save image failed", e)
-                                    scope.launch(Dispatchers.Main) {
-                                        snackbar.showSnackbar("保存失败: ${e.message}")
-                                    }
-                                }
-                            }
-                        }
-                        showImageMenu = false
-                    }
-
-                    if (webtoon) {
-                        LazyColumn(state = colState, modifier = Modifier.fillMaxSize()) {
-                            items(list) { file ->
-                                val imageModifier = Modifier.pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onTap = { controls = !controls },
-                                        onLongPress = {
-                                            imageToSave = file.path
-                                            showImageMenu = true
-                                        }
-                                    )
-                                }
-                                AsyncImage(
-                                    model = file,
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxWidth().then(imageModifier),
-                                    contentScale = ContentScale.FillWidth,
-                                )
-                            }
-                        }
-                    } else {
-                        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
-                            val imageModifier = Modifier.pointerInput(Unit) {
-                                detectTapGestures(
-                                    onTap = { controls = !controls },
-                                    onLongPress = {
-                                        imageToSave = list[page].path
-                                        showImageMenu = true
-                                    }
-                                )
-                            }
-                            AsyncImage(
-                                model = list[page],
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize().then(imageModifier),
-                                contentScale = ContentScale.Fit,
-                            )
-                        }
-                    }
-
-                    if (showImageMenu) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.6f))
-                                .clickable { showImageMenu = false },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Card(
-                                modifier = Modifier.padding(16.dp),
-                                shape = RoundedCornerShape(12.dp),
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    TextButton(
-                                        onClick = { imageToSave?.let { saveImage(it) } },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        Text("保存图片", style = MaterialTheme.typography.titleMedium)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    val currentIndex =
-                        if (webtoon) colState.firstVisibleItemIndex else pager.currentPage
-
-                    LaunchedEffect(currentIndex, list.size) {
-                        vm.updatePage(task.id, currentIndex + 1, list.size)
-                    }
-
-                    AnimatedVisibility(
-                        visible = controls,
-                        enter = fadeIn(),
-                        exit = fadeOut(),
-                        modifier = Modifier.align(Alignment.TopCenter),
-                    ) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .background(Color(0xCC000000))
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TextButton(onClick = onClose) { Text("关闭", color = Color.White) }
-                            val title = task.title ?: "JM${task.jmId}"
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    title,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier
-                                        .pointerInput(Unit) {
-                                            detectTapGestures(
-                                                onLongPress = {
-                                                    clipboard.setPrimaryClip(ClipData.newPlainText("title", title))
-                                                    scope.launch { snackbar.showSnackbar("已复制标题") }
-                                                }
-                                            )
-                                        },
-                                )
-                            }
-                            Text(
-                                "${currentIndex + 1} / ${list.size}",
-                                color = Color.White,
-                                modifier = Modifier.padding(end = 12.dp),
-                            )
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = controls,
-                        enter = slideInVertically(animationSpec = tween(160)) { it },
-                        exit = slideOutVertically(animationSpec = tween(160)) { it },
-                        modifier = Modifier.align(Alignment.BottomCenter),
-                    ) {
-                        ViewerControls(
-                            list = list,
-                            currentIndex = currentIndex,
-                            webtoon = webtoon,
-                            onModeChange = { webtoon = it; settings.webtoonMode = it },
-                            onGoTo = { i ->
-                                scope.launch {
-                                    if (webtoon) {
-                                        colState.animateScrollToItem(i)
-                                    } else {
-                                        pager.animateScrollToPage(i)
-                                    }
-                                }
-                            },
-                            onGoHome = {
-                                scope.launch {
-                                    if (webtoon) {
-                                        colState.animateScrollToItem(0)
-                                    } else {
-                                        pager.animateScrollToPage(0)
-                                    }
-                                }
-                            },
-                        )
-                    }
-                }
-            }
-            if (files == null || error != null) {
-                TextButton(
-                    onClick = onClose,
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
-                ) { Text("关闭", color = Color.White) }
-            }
-            SnackbarHost(
-                hostState = snackbar,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ViewerControls(
-    list: List<File>,
-    currentIndex: Int,
-    webtoon: Boolean,
-    onModeChange: (Boolean) -> Unit,
-    onGoTo: (Int) -> Unit,
-    onGoHome: () -> Unit,
-) {
-    val rowState = rememberLazyListState()
-    val thumbPx = with(LocalDensity.current) { 46.dp.toPx() }.toInt()
-    LaunchedEffect(currentIndex) {
-        delay(80)
-        val i = currentIndex.coerceAtLeast(0)
-        val li = rowState.layoutInfo
-        val viewport = li.viewportEndOffset - li.viewportStartOffset
-        val pad = ((viewport - thumbPx) / 2).coerceAtLeast(0)
-        runCatching { rowState.scrollToItem(i, -pad) }
-    }
-
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(Color(0xCC000000))
-            .pointerInput(Unit) { detectTapGestures { } }
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { onModeChange(false) }) {
-                Text("翻页", color = if (!webtoon) Color.White else Color(0x88FFFFFF))
-            }
-            TextButton(onClick = { onModeChange(true) }) {
-                Text("条漫", color = if (webtoon) Color.White else Color(0x88FFFFFF))
-            }
-            TextButton(onClick = onGoHome) {
-                Text("首页", color = Color(0xBBFFFFFF))
-            }
-            Spacer(Modifier.weight(1f))
-        }
-        LazyRow(
-            state = rowState,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            contentPadding = PaddingValues(horizontal = 4.dp),
-        ) {
-            itemsIndexed(list) { index, file ->
-                val selected = index == currentIndex
-                AsyncImage(
-                    model = file,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(46.dp, 62.dp)
-                        .border(
-                            width = if (selected) 3.dp else 1.dp,
-                            color = if (selected) LocalThemeColor.current else Color(0x33FFFFFF),
-                        )
-                        .clickable { onGoTo(index) },
-                )
-            }
-        }
-        if (list.size > 1) {
-            Slider(
-                value = currentIndex.toFloat(),
-                onValueChange = { v -> onGoTo(v.roundToInt()) },
-                valueRange = 0f..(list.size - 1).toFloat(),
-            )
-        }
-    }
-}
-
-private fun isImageName(name: String): Boolean {
-    val n = name.lowercase()
-    return n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") ||
-        n.endsWith(".webp") || n.endsWith(".gif") || n.endsWith(".bmp")
-}
-
-private fun extractForView(context: Context, task: Task): List<File> {
-    val outDir = File(context.cacheDir, "view/${task.id}")
-    File(context.cacheDir, "view").deleteRecursively()
-    outDir.mkdirs()
-
-    val ins = Storage.openInput(context, task)
-    var idx = 0
-    ins.use { input ->
-        ZipInputStream(input.buffered()).use { zis ->
-            val buf = ByteArray(64 * 1024)
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory && isImageName(entry.name)) {
-                    val ext = entry.name.substringAfterLast('.', "jpg")
-                    val f = File(outDir, "%05d.%s".format(idx, ext))
-                    f.outputStream().use { os ->
-                        while (true) {
-                            val n = zis.read(buf)
-                            if (n < 0) break
-                            os.write(buf, 0, n)
-                        }
-                    }
-                    idx++
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
-        }
-    }
-    return outDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
-}
-
-private fun statusText(t: Task): String = when (t.status) {
-    TaskStatus.QUEUED -> "排队中"
-    TaskStatus.RUNNING -> if (t.total > 0) "下载中 ${t.done}/${t.total}" else "下载中…"
-    TaskStatus.ZIPPING -> "打包中…"
-    TaskStatus.DONE -> buildString {
-        append(t.message ?: "完成")
-        t.zipName?.let { append(" · ").append(it) }
-    }
-    TaskStatus.FAILED -> "失败：${t.message ?: "未知错误"}"
-    TaskStatus.PAUSED -> "已暂停"
-}
-
-@Composable
-private fun statusColor(t: Task): Color {
-    val themeColor = LocalThemeColor.current
-    return when (t.status) {
-        TaskStatus.FAILED -> MaterialTheme.colorScheme.error
-        TaskStatus.PAUSED -> MaterialTheme.colorScheme.tertiary
-        TaskStatus.DONE -> themeColor
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-}
-
-private fun prettyUri(uri: String): String {
-    val decoded = Uri.decode(uri)
-    val afterColon = decoded.substringAfterLast(':', decoded)
-    return afterColon.ifBlank { decoded }
-}
 
 private fun copyToAppStorage(context: Context, sourceUri: Uri): Uri? {
     return runCatching {
         val dir = File(context.filesDir, "background")
         if (!dir.exists()) dir.mkdirs()
-        // 删除旧背景文件，避免堆积
         dir.listFiles()?.filter { it.name.startsWith("bg_") && it.extension == "jpg" }?.forEach { it.delete() }
         val destFile = File(dir, "bg_${System.currentTimeMillis()}.jpg")
         context.contentResolver.openInputStream(sourceUri)?.use { input ->
