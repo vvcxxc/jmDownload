@@ -66,6 +66,7 @@ class TaskRepository private constructor(private val file: File) {
             id = o.getString("id"),
             jmId = o.getString("jmId"),
             title = o.optString("title").ifEmpty { null },
+            authors = parseAuthors(o.optJSONArray("authors")),
             status = runCatching { TaskStatus.valueOf(o.getString("status")) }
                 .getOrDefault(TaskStatus.QUEUED),
             done = o.optInt("done"),
@@ -82,6 +83,15 @@ class TaskRepository private constructor(private val file: File) {
             currentPage = o.optInt("currentPage", -1).takeIf { it >= 1 },
             pageCount = o.optInt("pageCount", -1).takeIf { it >= 1 },
         )
+    }
+
+    private fun parseAuthors(arr: JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                arr.optString(i).trim().takeIf { it.isNotEmpty() }?.let(::add)
+            }
+        }
     }
 
     private fun persist() {
@@ -109,6 +119,7 @@ class TaskRepository private constructor(private val file: File) {
             put("id", t.id)
             put("jmId", t.jmId)
             put("title", t.title ?: "")
+            put("authors", JSONArray().apply { t.authors.forEach { put(it) } })
             put("status", t.status.name)
             put("done", t.done)
             put("total", t.total)

@@ -475,11 +475,12 @@ fun JmApp(vm: TaskViewModel) {
                                         selectionMode = true
                                         selected = selected + t.id
                                     },
-                                    onCopyTitle = { title ->
+                                    onCopyText = { text ->
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        clipboard.setPrimaryClip(ClipData.newPlainText("title", title))
-                                        scope.launch { snackbar.showSnackbar("已复制标题") }
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("text", text))
+                                        scope.launch { snackbar.showSnackbar("已复制") }
                                     },
+                                    onRequestAuthors = { vm.ensureAuthors(t.id) },
                                     onRetry = { vm.retry(t.id) },
                                     onPause = { vm.pause(t.id) },
                                     onResume = { vm.resume(t.id) },

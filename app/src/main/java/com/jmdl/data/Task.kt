@@ -6,6 +6,7 @@ data class Task(
     val id: String,               // unique task id (uuid)
     val jmId: String,             // JM album id
     val title: String? = null,    // resolved album title (once known)
+    val authors: List<String> = emptyList(), // resolved album authors (once known)
     val status: TaskStatus = TaskStatus.QUEUED,
     val done: Int = 0,            // images downloaded so far
     val total: Int = 0,          // total images (0 = unknown yet)

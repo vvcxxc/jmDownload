@@ -27,21 +27,31 @@ object JmEngine {
 
     data class Outcome(val total: Int, val success: Int, val failed: Int)
 
-    fun getTitle(jmId: String): String {
+    data class AlbumInfo(val title: String, val authors: List<String>)
+
+    fun getAlbumInfo(jmId: String): AlbumInfo {
         return try {
             val album = client().getAlbum(jmId)
             val title = album.title
-            if (title.isNullOrBlank()) {
+            val safeTitle = if (title.isNullOrBlank()) {
                 AppLogger.w("Album title is blank for jmId=$jmId")
                 "JM$jmId"
             } else {
                 title
             }
+            val authors = album.authors.orEmpty()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+            AppLogger.i("Album info jmId=$jmId title=$safeTitle authors=$authors")
+            AlbumInfo(safeTitle, authors)
         } catch (e: Exception) {
-            AppLogger.e("Failed to get title for jmId=$jmId", e)
+            AppLogger.e("Failed to get album info for jmId=$jmId", e)
             throw e
         }
     }
+
+    fun getTitle(jmId: String): String = getAlbumInfo(jmId).title
 
     fun download(jmId: String, workDir: File, onProgress: (done: Int, total: Int) -> Unit): Outcome {
         return try {

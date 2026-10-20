@@ -15,6 +15,7 @@ import com.jmdl.data.TaskRepository
 import com.jmdl.data.TaskStatus
 import com.jmdl.download.DownloadService
 import com.jmdl.download.Storage
+import com.jmdl.engine.JmEngine
 import com.jmdl.util.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,6 +24,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipFile
@@ -56,8 +59,39 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val _importResult = MutableStateFlow<ImportResult?>(null)
     val importResult: StateFlow<ImportResult?> = _importResult.asStateFlow()
 
+    private val authorLookupAttempted = mutableSetOf<String>()
+    private val authorLookupLock = Any()
+    private val authorLookupSemaphore = Semaphore(1)
+
     fun clearImportResult() {
         _importResult.value = null
+    }
+
+    /** Backfills authors for tasks saved before author metadata was persisted. */
+    fun ensureAuthors(taskId: String) {
+        val task = repo.byId(taskId) ?: return
+        if (task.status != TaskStatus.DONE || task.authors.isNotEmpty()) return
+        if (!task.jmId.all { it.isDigit() }) return
+        val shouldFetch = synchronized(authorLookupLock) {
+            authorLookupAttempted.add(task.id)
+        }
+        if (!shouldFetch) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            authorLookupSemaphore.withPermit {
+                runCatching { JmEngine.getAlbumInfo(task.jmId) }
+                    .onSuccess { info ->
+                        if (info.authors.isNotEmpty()) {
+                            repo.update(task.id) {
+                                if (it.authors.isEmpty()) it.copy(authors = info.authors) else it
+                            }
+                        }
+                    }
+                    .onFailure {
+                        AppLogger.w("Author backfill failed jmId=${task.jmId}: ${it.message}")
+                    }
+            }
+        }
     }
 
     init {

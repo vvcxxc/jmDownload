@@ -152,12 +152,13 @@ class DownloadService : Service() {
 
         try {
             requireRunning(taskId)
-            AppLogger.i("Task phase=TITLE taskId=$taskId jmId=$jmId")
-            val title = runWithTimeout(taskId, TITLE_TIMEOUT_MS) { JmEngine.getTitle(jmId) }
-            repo.update(taskId) { it.copy(title = title) }
+            AppLogger.i("Task phase=INFO taskId=$taskId jmId=$jmId")
+            val info = runWithTimeout(taskId, TITLE_TIMEOUT_MS) { JmEngine.getAlbumInfo(jmId) }
+            val title = info.title
+            repo.update(taskId) { it.copy(title = title, authors = info.authors) }
 
             requireRunning(taskId)
-            AppLogger.i("Task phase=DOWNLOAD taskId=$taskId jmId=$jmId title=$title")
+            AppLogger.i("Task phase=DOWNLOAD taskId=$taskId jmId=$jmId title=$title authors=${info.authors}")
             val outcome = runWithTimeout(taskId, DOWNLOAD_TIMEOUT_MS) {
                 var lastTick = 0L
                 var lastProgressAt = System.currentTimeMillis()

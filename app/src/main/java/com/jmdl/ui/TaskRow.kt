@@ -1,10 +1,12 @@
 package com.jmdl.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
@@ -40,6 +43,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -61,7 +65,8 @@ internal fun TaskRow(
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
-    onCopyTitle: (String) -> Unit,
+    onCopyText: (String) -> Unit,
+    onRequestAuthors: () -> Unit,
     onRetry: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -83,6 +88,9 @@ internal fun TaskRow(
             coverReady = result?.exists() == true
             AppLogger.i("Cover preview: id=${t.jmId} extract=${if (result != null) "ok" else "failed"}")
         }
+    }
+    LaunchedEffect(t.id, t.status, t.authors.isEmpty()) {
+        if (t.status == TaskStatus.DONE && t.authors.isEmpty()) onRequestAuthors()
     }
     Box {
         Card(
@@ -133,9 +141,45 @@ internal fun TaskRow(
                         displayName + (t.title?.let { if (t.jmId.all { it.isDigit() }) " · $it" else "" } ?: ""),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.pointerInput(copyTitle) {
-                            detectTapGestures(onLongPress = { onCopyTitle(copyTitle) })
+                            detectTapGestures(onLongPress = { onCopyText(copyTitle) })
                         },
                     )
+                    if (t.authors.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            t.authors.take(3).forEach { author ->
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            color = themeColor.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(4.dp),
+                                        )
+                                        .pointerInput(author) {
+                                            detectTapGestures(onLongPress = { onCopyText(author) })
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                ) {
+                                    Text(
+                                        text = author,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = themeColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            if (t.authors.size > 3) {
+                                Text(
+                                    text = "+${t.authors.size - 3}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                     Text(
                         statusText(t),
                         style = MaterialTheme.typography.bodySmall,
