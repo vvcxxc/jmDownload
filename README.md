@@ -2,6 +2,9 @@
 
 一个极简的安卓 JMComic 下载 App：输入车号 → 排队 → 逐个下载 → **一本一个 zip** 存到你选的目录。纯手机、直连 JM、流量可用，不依赖电脑。
 
+> **直接下载 APK**：[GitHub Releases](https://github.com/vvcxxc/jmcomic-qqbot-wrapper/releases/latest)  
+> 推送 `v*` 标签后，GitHub Actions 会自动构建 `JMComic-<tag>.apk` 并作为 Release 附件发布。
+
 ## 功能
 
 - 输入框输车号（默认前缀 `JM`），也能直接粘贴带 `jm`/空格/链接的文本，自动识别车号。
@@ -254,6 +257,29 @@ APK 文件通常位于：
 3. 自动打开输出目录
 
 脚本会在构建前先移走旧 APK，强制 Gradle 重新执行打包任务，避免所有任务 `UP-TO-DATE` 时 APK 修改时间不更新；构建结束后会打印两个 APK 的实际修改时间和大小。
+
+## GitHub 自动发布 APK
+
+工作流文件：`.github/workflows/android-release.yml`
+
+- 推送到 `main`：自动构建 Release APK，并作为 Actions Artifact 上传。
+- 推送 `v*` 标签：自动创建 GitHub Release，并把 `JMComic-<tag>.apk` 作为附件，任何人打开仓库的 **Releases** 页面即可直接下载。
+- 也可以在 GitHub 的 **Actions → Build Android APK → Run workflow** 手动触发。
+
+发布一个版本：
+
+```bat
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+构建完成后打开：
+
+```text
+https://github.com/vvcxxc/jmcomic-qqbot-wrapper/releases/latest
+```
+
+就能在 Release 附件里直接下载 APK。
 
 ### 10. 重启后导入的文件无法读取
 
