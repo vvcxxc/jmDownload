@@ -123,6 +123,14 @@ object JmEngine {
         return client().getAlbum(jmId)
     }
 
+    /**
+     * Builds a cover thumbnail URL without relying on the (often empty) album/image fields.
+     * The library's own cover convention is: {imageDomain}/media/albums/{albumId}{size}.jpg,
+     * where size is "" for the detail page and "_3x4" for search thumbnails.
+     */
+    fun getAlbumCoverUrl(jmId: String, size: String = "_3x4"): String =
+        client().getAlbumCoverUrl(jmId, size)
+
     fun searchByKeyword(keyword: String, page: Int = 1): JmSearchPage {
         val query = SearchQuery.Builder()
             .text(keyword)

@@ -142,6 +142,10 @@ fun SearchScreen(
                                 imageUrl = album.images.firstOrNull()?.url
                                 AppLogger.i("Search JM_ID: cover fallback from first page image: $imageUrl")
                             }
+                            if (imageUrl.isNullOrBlank()) {
+                                imageUrl = JmEngine.getAlbumCoverUrl(query, "_3x4")
+                                AppLogger.i("Search JM_ID: cover fallback from library cover URL: $imageUrl")
+                            }
                             val item = SearchResultItem(
                                 id = query,
                                 title = album.title,
@@ -163,7 +167,8 @@ fun SearchScreen(
                                     id = meta.id,
                                     title = meta.title,
                                     authors = meta.authors,
-                                    image = meta.image
+                                    image = meta.image.takeUnless { it.isNullOrBlank() }
+                                        ?: JmEngine.getAlbumCoverUrl(meta.id, "_3x4")
                                 )
                             }
                             AppLogger.i("Search KEYWORD: '$query' page=$page -> ${items.size} results, totalPages=${pageResult.totalPages}")
