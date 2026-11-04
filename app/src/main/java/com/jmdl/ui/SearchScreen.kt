@@ -1,7 +1,8 @@
 package com.jmdl.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,13 +51,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.jmdl.engine.JmEngine
 import com.jmdl.data.Task
+import com.jmdl.data.TaskStatus
 import com.jmdl.util.AppLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -95,7 +101,7 @@ fun SearchScreen(
     var totalPages by remember { mutableIntStateOf(1) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     val tasks by vm.tasks.collectAsStateWithLifecycle()
-    val downloadedIds = remember(tasks) { tasks.map { it.jmId }.toSet() }
+    val taskStatusById = remember(tasks) { tasks.associate { it.jmId to it.status } }
 
     fun performSearch(page: Int = 1) {
         val query = searchInput.trim()
@@ -235,6 +241,17 @@ fun SearchScreen(
                             selectedLabelColor = themeColor
                         )
                     )
+                    Spacer(Modifier.weight(1f))
+                    if (results.isNotEmpty()) {
+                        TextButton(
+                            onClick = {
+                                selectionMode = !selectionMode
+                                if (!selectionMode) selectedIds = emptySet()
+                            },
+                        ) {
+                            Text(if (selectionMode) "取消" else "选择", color = themeColor)
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -384,7 +401,7 @@ fun SearchScreen(
                         item = item,
                         selectionMode = selectionMode,
                         isSelected = item.id in selectedIds,
-                        isDownloaded = item.id in downloadedIds,
+                        existingStatus = taskStatusById[item.id],
                         themeColor = themeColor,
                         onToggleSelect = {
                             selectedIds = if (item.id in selectedIds)
@@ -397,10 +414,11 @@ fun SearchScreen(
                             selectedIds = selectedIds + item.id
                         },
                         onDownload = {
-                            AppLogger.i("Single download from search: id=${item.id}")
+                            val wasFailed = taskStatusById[item.id] == TaskStatus.FAILED
+                            AppLogger.i("Single download from search: id=${item.id} wasFailed=$wasFailed")
                             val err: String? = vm.addTask(item.id)
                             if (err == null) {
-                                snackbar("JM${item.id} 已加入下载列表")
+                                snackbar(if (wasFailed) "JM${item.id} 已重新加入下载列表" else "JM${item.id} 已加入下载列表")
                             } else {
                                 AppLogger.w("Single download failed: id=${item.id} err=$err")
                                 snackbar(err)
@@ -433,23 +451,29 @@ fun SearchScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SearchResultRow(
     item: SearchResultItem,
     selectionMode: Boolean,
     isSelected: Boolean,
-    isDownloaded: Boolean,
+    existingStatus: TaskStatus?,
     themeColor: Color,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
     onDownload: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val downloaded = existingStatus != null && existingStatus != TaskStatus.FAILED
+    val isFailed = existingStatus == TaskStatus.FAILED
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                if (selectionMode) onToggleSelect()
-            },
+            .combinedClickable(
+                onClick = { if (selectionMode) onToggleSelect() },
+                onLongClick = { if (!selectionMode) onEnterSelect() },
+            ),
         colors = appCardColors()
     ) {
         Box {
@@ -464,6 +488,21 @@ private fun SearchResultRow(
                         colors = CheckboxDefaults.colors(checkedColor = themeColor),
                     )
                     Spacer(Modifier.width(4.dp))
+                }
+
+                if (!item.image.isNullOrBlank()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(item.image)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "封面",
+                        modifier = Modifier
+                            .size(width = 64.dp, height = 88.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Spacer(Modifier.width(10.dp))
                 }
 
                 Column(modifier = Modifier.weight(1f).padding(bottom = if (!selectionMode) 32.dp else 0.dp)) {
@@ -526,14 +565,14 @@ private fun SearchResultRow(
             if (!selectionMode) {
                 Button(
                     onClick = {
-                        if (!isDownloaded) {
-                            AppLogger.i("Download from search: id=${item.id} title=${item.title}")
+                        if (!downloaded) {
+                            AppLogger.i("Download from search: id=${item.id} title=${item.title} failed=$isFailed")
                             onDownload()
                         }
                     },
-                    enabled = !isDownloaded,
+                    enabled = !downloaded,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isDownloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f) else themeColor,
+                        containerColor = if (downloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f) else themeColor,
                         disabledContainerColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
                         disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),
@@ -542,11 +581,18 @@ private fun SearchResultRow(
                         .align(Alignment.BottomEnd)
                         .padding(end = 12.dp, bottom = 8.dp),
                 ) {
-                    if (!isDownloaded) {
+                    if (!downloaded) {
                         Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(2.dp))
                     }
-                    Text(if (isDownloaded) "已加入" else "下载", style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        when {
+                            downloaded -> "已加入"
+                            isFailed -> "重试"
+                            else -> "下载"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                 }
             }
         }

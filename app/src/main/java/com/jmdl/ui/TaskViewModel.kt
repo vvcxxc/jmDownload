@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipFile
@@ -177,7 +178,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                 TaskStatus.DONE -> return "JM$id 已下载完成"
                 TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED, TaskStatus.PAUSED -> return "JM$id 已在列表中"
                 TaskStatus.FAILED -> {
-                    retryOneTask(existing)
+                    resetFailedTask(existing)
                     return null
                 }
             }
@@ -196,12 +197,25 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
-    private fun retryOneTask(t: Task) {
+    private fun resetFailedTask(t: Task) {
+        repo.update(t.id) {
+            it.copy(
+                status = TaskStatus.QUEUED,
+                done = 0, total = 0, failed = 0,
+                message = null, zipName = null, fileUri = null,
+                createdAt = System.currentTimeMillis(),
+            )
+        }
+        AppLogger.i("failed task requeued taskId=${t.id}")
+    }
+
+    /** Deletes the old zip before re-queuing so the download can never race the delete. */
+    private suspend fun retryOneTask(t: Task) {
         if (t.fileUri != null || t.zipName != null) {
-            viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 Storage.deleteFile(getApplication(), t)
-                AppLogger.i("deleted file for retry taskId=${t.id}")
             }
+            AppLogger.i("deleted file for retry taskId=${t.id}")
         }
         repo.update(t.id) {
             it.copy(
@@ -215,14 +229,19 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun retry(taskId: String) {
-        repo.byId(taskId)?.let { retryOneTask(it) }
-        DownloadService.start(getApplication())
+        val task = repo.byId(taskId) ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            retryOneTask(task)
+            DownloadService.start(getApplication())
+        }
     }
 
     fun retryAll(taskIds: List<String>) {
         AppLogger.i("retryAll called, count=${taskIds.size}")
-        taskIds.forEach { id -> repo.byId(id)?.let { retryOneTask(it) } }
-        DownloadService.start(getApplication())
+        viewModelScope.launch(Dispatchers.IO) {
+            taskIds.forEach { id -> repo.byId(id)?.let { retryOneTask(it) } }
+            DownloadService.start(getApplication())
+        }
     }
 
     fun remove(taskId: String) {

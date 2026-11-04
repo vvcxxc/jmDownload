@@ -268,7 +268,7 @@ fun JmApp(vm: TaskViewModel) {
     ) { uris: List<Uri>? ->
         if (!uris.isNullOrEmpty()) {
             showSettings = false
-            currentFilter = TaskFilter.RUNNING
+            currentFilter = TaskFilter.DONE
             vm.importLocalZips(uris)
             scope.launch { snackbar.showSnackbar("正在导入 ${uris.size} 个文件…") }
         }
