@@ -2,6 +2,7 @@ package com.jmdl.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,12 +41,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +73,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 enum class SearchMode { JM_ID, KEYWORD }
@@ -102,6 +109,20 @@ fun SearchScreen(
     var searchJob by remember { mutableStateOf<Job?>(null) }
     val tasks by vm.tasks.collectAsStateWithLifecycle()
     val taskStatusById = remember(tasks) { tasks.associate { it.jmId to it.status } }
+    val pageCounts = remember { mutableStateMapOf<String, Int>() }
+    val pageCountGate = remember { Semaphore(3) }
+
+    fun requestPageCount(item: SearchResultItem) {
+        if (item.pageCount > 0 || pageCounts.containsKey(item.id)) return
+        scope.launch {
+            pageCountGate.withPermit {
+                val count = withContext(Dispatchers.IO) {
+                    runCatching { JmEngine.searchByAlbum(item.id).pageCount }.getOrNull()
+                }
+                if (count != null && count > 0) pageCounts[item.id] = count
+            }
+        }
+    }
 
     fun performSearch(page: Int = 1) {
         val query = searchInput.trim()
@@ -407,7 +428,9 @@ fun SearchScreen(
                         selectionMode = selectionMode,
                         isSelected = item.id in selectedIds,
                         existingStatus = taskStatusById[item.id],
+                        pageCount = pageCounts[item.id] ?: item.pageCount,
                         themeColor = themeColor,
+                        onRequestPageCount = { requestPageCount(item) },
                         onToggleSelect = {
                             selectedIds = if (item.id in selectedIds)
                                 selectedIds - item.id
@@ -463,7 +486,9 @@ private fun SearchResultRow(
     selectionMode: Boolean,
     isSelected: Boolean,
     existingStatus: TaskStatus?,
+    pageCount: Int,
     themeColor: Color,
+    onRequestPageCount: () -> Unit,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
     onDownload: () -> Unit,
@@ -471,6 +496,11 @@ private fun SearchResultRow(
     val context = LocalContext.current
     val downloaded = existingStatus != null && existingStatus != TaskStatus.FAILED
     val isFailed = existingStatus == TaskStatus.FAILED
+    var showPreview by remember(item.id) { mutableStateOf(false) }
+
+    LaunchedEffect(item.id, pageCount) {
+        if (pageCount <= 0) onRequestPageCount()
+    }
 
     Card(
         modifier = Modifier
@@ -504,7 +534,8 @@ private fun SearchResultRow(
                         contentDescription = "封面",
                         modifier = Modifier
                             .size(width = 64.dp, height = 88.dp)
-                            .clip(RoundedCornerShape(8.dp)),
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showPreview = true },
                         contentScale = ContentScale.Crop,
                     )
                     Spacer(Modifier.width(10.dp))
@@ -556,10 +587,10 @@ private fun SearchResultRow(
                         }
                     }
 
-                    if (item.pageCount > 0) {
+                    if (pageCount > 0) {
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "${item.pageCount}页",
+                            text = "${pageCount}页",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -599,6 +630,31 @@ private fun SearchResultRow(
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
+            }
+        }
+    }
+
+    if (showPreview && !item.image.isNullOrBlank()) {
+        Dialog(
+            onDismissRequest = { showPreview = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { showPreview = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(item.image)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
             }
         }
     }
