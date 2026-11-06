@@ -131,6 +131,25 @@ object JmEngine {
     fun getAlbumCoverUrl(jmId: String, size: String = "_3x4"): String =
         client().getAlbumCoverUrl(jmId, size)
 
+    /**
+     * Resolves the total page count even when the detail endpoint returns 0.
+     * Single-chapter albums are handled via getPhoto; multi-chapter albums via getComicRead.
+     */
+    fun getPageCount(jmId: String): Int {
+        val album = runCatching { client().getAlbum(jmId) }.getOrNull() ?: return 0
+        if (album.pageCount > 0) return album.pageCount
+        if (album.images.isNotEmpty()) return album.images.size
+
+        val photoMetas = album.photoMetas
+        if (photoMetas.size == 1) {
+            return runCatching { client().getPhoto(photoMetas.first().id).images.size }.getOrDefault(0)
+        }
+        if (photoMetas.isNotEmpty()) {
+            return runCatching { client().getComicRead(jmId).pageCount }.getOrDefault(0)
+        }
+        return 0
+    }
+
     fun searchByKeyword(keyword: String, page: Int = 1): JmSearchPage {
         val query = SearchQuery.Builder()
             .text(keyword)

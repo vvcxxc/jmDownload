@@ -117,9 +117,9 @@ fun SearchScreen(
         scope.launch {
             pageCountGate.withPermit {
                 val count = withContext(Dispatchers.IO) {
-                    runCatching { JmEngine.searchByAlbum(item.id).pageCount }.getOrNull()
+                    JmEngine.getPageCount(item.id)
                 }
-                if (count != null && count > 0) pageCounts[item.id] = count
+                if (count > 0) pageCounts[item.id] = count
             }
         }
     }
