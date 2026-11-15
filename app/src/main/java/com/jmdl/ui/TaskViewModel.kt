@@ -57,6 +57,9 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val _background = MutableStateFlow(Background(settings.bgColor, settings.bgImageUri))
     val background: StateFlow<Background> = _background.asStateFlow()
 
+    private val _bgImageScale = MutableStateFlow(settings.bgImageScale)
+    val bgImageScale: StateFlow<String> = _bgImageScale.asStateFlow()
+
     private val _themeColor = MutableStateFlow(Color(settings.themeColor))
     val themeColor: StateFlow<Color> = _themeColor.asStateFlow()
 
@@ -159,6 +162,12 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         settings.bgImageUri = null
         _background.value = Background(null, null)
         AppLogger.i("settings background reset")
+    }
+
+    fun setBgImageScale(value: String) {
+        settings.bgImageScale = value
+        _bgImageScale.value = settings.bgImageScale
+        AppLogger.i("settings bg image scale changed -> ${settings.bgImageScale}")
     }
 
     fun setThemeColor(argb: Int) {

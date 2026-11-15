@@ -658,7 +658,9 @@ private fun prettyUri(uri: String): String {
 @Composable
 internal fun BackgroundDialog(
     themeColor: Color,
+    imageScale: String,
     onPickImage: () -> Unit,
+    onImageScale: (String) -> Unit,
     onColor: (Int) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
@@ -684,9 +686,26 @@ internal fun BackgroundDialog(
                     Spacer(Modifier.width(8.dp))
                     TextButton(onClick = onReset) { Text("恢复默认") }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("图片显示方式", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { onImageScale("fit") }) {
+                        Text(
+                            if (imageScale == "fit") "✓ 完整显示" else "完整显示",
+                            color = if (imageScale == "fit") themeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { onImageScale("crop") }) {
+                        Text(
+                            if (imageScale == "crop") "✓ 填充屏幕" else "填充屏幕",
+                            color = if (imageScale == "crop") themeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
                 Text(
-                    "图片会按屏幕比例居中裁切，不会拉伸；如果旧背景变形，请重新选一次。",
+                    "选图片后可拖动、双指缩放框选区域；不会拉伸或压缩图片。完整显示保留整张图，填充屏幕按当前屏幕比例显示。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

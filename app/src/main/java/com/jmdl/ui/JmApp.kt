@@ -74,7 +74,6 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
@@ -102,6 +101,7 @@ internal val LocalThemeColor = staticCompositionLocalOf { Color(0xFF2979FF) }
 fun JmApp(vm: TaskViewModel) {
     val tasks by vm.tasks.collectAsStateWithLifecycle()
     val pendingChapters by vm.pendingChapterSelection.collectAsStateWithLifecycle()
+    val bgImageScale by vm.bgImageScale.collectAsStateWithLifecycle()
     val saveUri by vm.saveUri.collectAsStateWithLifecycle()
     val lastViewedId by vm.lastViewedTaskId.collectAsStateWithLifecycle()
     val importResult by vm.importResult.collectAsStateWithLifecycle()
@@ -113,6 +113,7 @@ fun JmApp(vm: TaskViewModel) {
     val focus = LocalFocusManager.current
     val snackbar = remember { SnackbarHostState() }
     var input by remember { mutableStateOf("") }
+    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
     var pendingDelete by remember { mutableStateOf<Task?>(null) }
     var viewing by remember { mutableStateOf<Task?>(null) }
     var selectionMode by remember { mutableStateOf(false) }
@@ -210,18 +211,7 @@ fun JmApp(vm: TaskViewModel) {
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            scope.launch(Dispatchers.IO) {
-                // Keep the source aspect ratio. The UI applies ContentScale.Crop at render
-                // time, so phone/tablet orientation changes never distort the bitmap.
-                val localUri = copyToAppStorage(context, uri)
-                withContext(Dispatchers.Main) {
-                    if (localUri != null) {
-                        vm.setBgImage(localUri)
-                    } else {
-                        snackbar.showSnackbar("背景图片读取失败")
-                    }
-                }
-            }
+            cropSourceUri = uri
         }
     }
 
@@ -273,6 +263,13 @@ fun JmApp(vm: TaskViewModel) {
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    if (bgColor != null) Color(bgColor) else MaterialTheme.colorScheme.background
+                )
+        )
         if (bgImage != null) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
@@ -280,10 +277,8 @@ fun JmApp(vm: TaskViewModel) {
                     .build(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
+                contentScale = if (bgImageScale == "crop") ContentScale.Crop else ContentScale.Fit,
             )
-        } else if (bgColor != null) {
-            Box(Modifier.fillMaxSize().background(Color(bgColor)))
         }
 
         CompositionLocalProvider(LocalThemeColor provides themeColor) {
@@ -643,7 +638,9 @@ fun JmApp(vm: TaskViewModel) {
     if (showBackground) {
         BackgroundDialog(
             themeColor = themeColor,
+            imageScale = bgImageScale,
             onPickImage = { showBackground = false; bgImagePicker.launch(arrayOf("image/*")) },
+            onImageScale = { vm.setBgImageScale(it) },
             onColor = { vm.setBgColor(it) },
             onReset = { vm.clearBg() },
             onDismiss = { showBackground = false },
@@ -685,6 +682,26 @@ fun JmApp(vm: TaskViewModel) {
             albums = albums,
             onConfirm = { vm.confirmChapterSelection(it) },
             onCancel = { vm.cancelChapterSelection() },
+        )
+    }
+
+    cropSourceUri?.let { uri ->
+        BackgroundCropDialog(
+            uri = uri,
+            onDismiss = { cropSourceUri = null },
+            onConfirm = { bitmap ->
+                cropSourceUri = null
+                scope.launch(Dispatchers.IO) {
+                    val localUri = saveBackgroundBitmap(context, bitmap)
+                    withContext(Dispatchers.Main) {
+                        if (localUri != null) {
+                            vm.setBgImage(localUri)
+                        } else {
+                            snackbar.showSnackbar("背景图片保存失败")
+                        }
+                    }
+                }
+            },
         )
     }
 
@@ -783,20 +800,4 @@ private fun InputRow(value: String, onValueChange: (String) -> Unit, onAdd: () -
             colors = ButtonDefaults.buttonColors(containerColor = themeColor),
         ) { Text("添加") }
     }
-}
-
-
-private fun copyToAppStorage(context: Context, sourceUri: Uri): Uri? {
-    return runCatching {
-        val dir = File(context.filesDir, "background")
-        if (!dir.exists()) dir.mkdirs()
-        dir.listFiles()?.filter { it.name.startsWith("bg_") && it.extension == "jpg" }?.forEach { it.delete() }
-        val destFile = File(dir, "bg_${System.currentTimeMillis()}.jpg")
-        context.contentResolver.openInputStream(sourceUri)?.use { input ->
-            destFile.outputStream().use { output ->
-                input.copyTo(output)
-            }
-        }
-        Uri.fromFile(destFile)
-    }.getOrNull()
 }
