@@ -681,6 +681,12 @@ internal fun BackgroundDialog(
                     Spacer(Modifier.width(8.dp))
                     TextButton(onClick = onReset) { Text("恢复默认") }
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "图片会按屏幕比例居中裁切，不会拉伸；如果旧背景变形，请重新选一次。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },

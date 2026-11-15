@@ -63,8 +63,6 @@ import com.jmdl.download.DownloadService
 import com.jmdl.util.AppLogger
 import kotlinx.coroutines.launch
 import android.os.Build
-import android.provider.MediaStore
-import android.content.ContentValues
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -126,7 +124,6 @@ fun JmApp(vm: TaskViewModel) {
     var showInputRules by remember { mutableStateOf(false) }
     var currentFilter by remember { mutableStateOf(TaskFilter.ALL) }
     var currentTab by remember { mutableIntStateOf(0) }
-    var cropOutputUri by remember { mutableStateOf<Uri?>(null) }
     val listState = rememberLazyListState()
     val stickyUnreadIds = remember { mutableStateOf(setOf<String>()) }
     var expandedGroups by remember { mutableStateOf(setOf<String>()) }
@@ -208,67 +205,22 @@ fun JmApp(vm: TaskViewModel) {
         selected = emptySet()
     }
 
-    val cropImageLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val uri = cropOutputUri ?: result.data?.data
-        cropOutputUri = null
-        if (result.resultCode == android.app.Activity.RESULT_OK && uri != null) {
-            scope.launch(Dispatchers.IO) {
-                val localUri = copyToAppStorage(context, uri)
-                if (localUri != null) {
-                    withContext(Dispatchers.Main) {
-                        vm.setBgImage(localUri)
-                    }
-                }
-                // 清理 MediaStore 中作为裁剪输出的临时文件，避免污染相册
-                runCatching { context.contentResolver.delete(uri, null, null) }
-            }
-        }
-    }
-
     val bgImagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, "bg_crop_${System.currentTimeMillis()}.jpg")
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            scope.launch(Dispatchers.IO) {
+                // Keep the source aspect ratio. The UI applies ContentScale.Crop at render
+                // time, so phone/tablet orientation changes never distort the bitmap.
+                val localUri = copyToAppStorage(context, uri)
+                withContext(Dispatchers.Main) {
+                    if (localUri != null) {
+                        vm.setBgImage(localUri)
+                    } else {
+                        snackbar.showSnackbar("背景图片读取失败")
+                    }
+                }
             }
-            val outputUri = context.contentResolver.insert(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
-            )
-            cropOutputUri = outputUri
-
-            val metrics = context.resources.displayMetrics
-            val screenW = metrics.widthPixels
-            val screenH = metrics.heightPixels
-            val maxDim = 1200
-            val ratio = screenW.toFloat() / screenH.toFloat()
-            val outW: Int
-            val outY: Int
-            if (screenW >= screenH) {
-                outW = maxDim
-                outY = (maxDim / ratio).toInt()
-            } else {
-                outY = maxDim
-                outW = (maxDim * ratio).toInt()
-            }
-
-            val cropIntent = Intent("com.android.camera.action.CROP")
-            cropIntent.setDataAndType(uri, "image/*")
-            cropIntent.putExtra("crop", "true")
-            cropIntent.putExtra("aspectX", screenW)
-            cropIntent.putExtra("aspectY", screenH)
-            cropIntent.putExtra("outputX", outW)
-            cropIntent.putExtra("outputY", outY)
-            cropIntent.putExtra("return-data", false)
-            cropIntent.putExtra("outputFormat", "JPEG")
-            if (outputUri != null) {
-                cropIntent.putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
-            }
-            cropIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            cropImageLauncher.launch(cropIntent)
         }
     }
 
