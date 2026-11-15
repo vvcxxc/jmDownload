@@ -1,7 +1,9 @@
 package com.jmdl.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,22 +11,35 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.jmdl.data.Task
 import com.jmdl.data.TaskStatus
+import com.jmdl.util.CoverCache
 
 internal data class TaskGroup(
     val albumId: String,
@@ -77,6 +92,35 @@ internal fun TaskGroupRow(
     onRemove: (Task) -> Unit,
 ) {
     val themeColor = LocalThemeColor.current
+    val context = LocalContext.current
+    val coverSource = group.tasks.firstOrNull {
+        it.isChapter && it.status == TaskStatus.DONE && it.fileUri != null
+    }
+    val groupCoverFile = remember(coverSource?.id, coverSource?.fileUri) {
+        CoverCache.getCoverFile(context, group.albumId, "_group_${coverSource?.id ?: "none"}")
+    }
+    var coverReady by remember(coverSource?.id, coverSource?.fileUri) {
+        mutableStateOf(groupCoverFile.exists())
+    }
+    LaunchedEffect(coverSource?.id, coverSource?.fileUri) {
+        val source = coverSource
+        if (source == null) {
+            coverReady = false
+            return@LaunchedEffect
+        }
+        if (!groupCoverFile.exists()) {
+            val extracted = CoverCache.extractAndCache(
+                context,
+                source.fileUri!!,
+                group.albumId,
+                "_group_${source.id}",
+            )
+            coverReady = extracted?.exists() == true
+        } else {
+            coverReady = true
+        }
+    }
+
     val done = group.tasks.count { it.status == TaskStatus.DONE }
     val running = group.tasks.count {
         it.status == TaskStatus.RUNNING || it.status == TaskStatus.QUEUED || it.status == TaskStatus.ZIPPING
@@ -103,6 +147,36 @@ internal fun TaskGroupRow(
                     .clickable(onClick = onToggle),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (coverReady) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(groupCoverFile)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "封面",
+                        modifier = Modifier
+                            .size(width = 56.dp, height = 76.dp)
+                            .clip(RoundedCornerShape(6.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 56.dp, height = 76.dp)
+                            .background(
+                                themeColor.copy(alpha = 0.1f),
+                                RoundedCornerShape(6.dp),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "JM",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = themeColor,
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(

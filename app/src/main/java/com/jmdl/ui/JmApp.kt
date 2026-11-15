@@ -101,6 +101,7 @@ internal val LocalThemeColor = staticCompositionLocalOf { Color(0xFF2979FF) }
 @Composable
 fun JmApp(vm: TaskViewModel) {
     val tasks by vm.tasks.collectAsStateWithLifecycle()
+    val pendingChapters by vm.pendingChapterSelection.collectAsStateWithLifecycle()
     val saveUri by vm.saveUri.collectAsStateWithLifecycle()
     val lastViewedId by vm.lastViewedTaskId.collectAsStateWithLifecycle()
     val importResult by vm.importResult.collectAsStateWithLifecycle()
@@ -368,10 +369,13 @@ fun JmApp(vm: TaskViewModel) {
                                 input = ""
                                 focus.clearFocus()
                                 if (text.isNotBlank()) {
-                                    currentFilter = TaskFilter.RUNNING
                                     scope.launch {
                                         val err = vm.addTask(text)
-                                        if (err != null) snackbar.showSnackbar(err)
+                                        if (err == null) {
+                                            currentFilter = TaskFilter.RUNNING
+                                        } else {
+                                            snackbar.showSnackbar(err)
+                                        }
                                     }
                                 }
                             },
@@ -673,6 +677,14 @@ fun JmApp(vm: TaskViewModel) {
                 selectionMode = false
                 selected = emptySet()
             },
+        )
+    }
+
+    pendingChapters?.let { albums ->
+        ChapterSelectionDialog(
+            albums = albums,
+            onConfirm = { vm.confirmChapterSelection(it) },
+            onCancel = { vm.cancelChapterSelection() },
         )
     }
 

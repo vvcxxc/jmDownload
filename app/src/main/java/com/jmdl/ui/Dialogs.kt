@@ -8,6 +8,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -699,4 +702,109 @@ internal fun BackgroundDialog(
             onDismiss = { showColorPicker = false },
         )
     }
+}
+@Composable
+internal fun ChapterSelectionDialog(
+    albums: List<PendingChapterAlbum>,
+    onConfirm: (Map<String, Set<String>>) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val themeColor = LocalThemeColor.current
+    val scrollState = rememberScrollState()
+    var selected by remember(albums) {
+        mutableStateOf(
+            albums.associate { album ->
+                album.albumId to album.chapters.map { it.id }.toSet()
+            }
+        )
+    }
+    val totalSelected = selected.values.sumOf { it.size }
+
+    fun toggle(albumId: String, chapterId: String) {
+        val current = selected[albumId].orEmpty()
+        val next = if (chapterId in current) current - chapterId else current + chapterId
+        selected = selected + (albumId to next)
+    }
+
+    CompactDialog(
+        onDismissRequest = onCancel,
+        title = { Text("选择要下载的章节") },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp)
+                    .padding(end = 10.dp)
+                    .scrollHints(scrollState),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 10.dp)
+                        .verticalScroll(scrollState),
+                ) {
+                    albums.forEach { album ->
+                        Text(
+                            "JM${album.albumId} · ${album.title}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "${album.chapters.size} 章，已选 ${selected[album.albumId].orEmpty().size} 章",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = {
+                                selected = selected + (album.albumId to album.chapters.map { it.id }.toSet())
+                            }) { Text("全选") }
+                            TextButton(onClick = {
+                                selected = selected + (album.albumId to emptySet())
+                            }) { Text("清空") }
+                        }
+                        album.chapters.forEach { chapter ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { toggle(album.albumId, chapter.id) }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = chapter.id in selected[album.albumId].orEmpty(),
+                                    onCheckedChange = null,
+                                    colors = CheckboxDefaults.colors(checkedColor = themeColor),
+                                )
+                                Text(
+                                    text = chapter.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (chapter.title != "第${chapter.sortOrder}章") {
+                                    Text(
+                                        text = "第${chapter.sortOrder}章",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = themeColor,
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(selected) },
+                enabled = totalSelected > 0,
+            ) {
+                Text("下载选中章节（$totalSelected）")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text("取消") }
+        },
+    )
 }

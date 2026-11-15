@@ -17,16 +17,17 @@ object CoverCache {
         return dir
     }
 
-    fun getCoverFile(context: Context, jmId: String): File {
-        return File(getDir(context), "${jmId}.jpg")
+    fun getCoverFile(context: Context, jmId: String, suffix: String = ""): File {
+        return File(getDir(context), "$jmId$suffix.jpg")
     }
 
     suspend fun extractAndCache(
         context: Context,
         fileUri: String,
         jmId: String,
+        suffix: String = "",
     ): File? = withContext(Dispatchers.IO) {
-        val coverFile = getCoverFile(context, jmId)
+        val coverFile = getCoverFile(context, jmId, suffix)
         if (coverFile.exists()) {
             AppLogger.i("CoverCache: already cached jmId=$jmId")
             return@withContext coverFile

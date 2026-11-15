@@ -17,6 +17,7 @@ import com.jmdl.download.DownloadService
 import com.jmdl.download.Storage
 import com.jmdl.engine.JmEngine
 import com.jmdl.util.AppLogger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,6 +34,13 @@ import java.io.File
 import java.util.UUID
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
+
+data class PendingChapterAlbum(
+    val albumId: String,
+    val title: String,
+    val authors: List<String>,
+    val chapters: List<JmEngine.ChapterInfo>,
+)
 
 class TaskViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -66,6 +74,18 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val authorLookupLock = Any()
     private val authorLookupSemaphore = Semaphore(1)
     private val addMutex = Mutex()
+
+    private val _pendingChapterSelection = MutableStateFlow<List<PendingChapterAlbum>?>(null)
+    val pendingChapterSelection: StateFlow<List<PendingChapterAlbum>?> = _pendingChapterSelection.asStateFlow()
+    private var chapterSelectionDeferred: CompletableDeferred<Map<String, Set<String>>?>? = null
+
+    fun confirmChapterSelection(selected: Map<String, Set<String>>) {
+        chapterSelectionDeferred?.complete(selected)
+    }
+
+    fun cancelChapterSelection() {
+        chapterSelectionDeferred?.complete(null)
+    }
 
     fun clearImportResult() {
         _importResult.value = null
@@ -157,13 +177,49 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         val ids = JmIdParser.parseAll(input)
         if (ids.isEmpty()) return@withLock "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
 
+        val resolved = ids.map { id ->
+            id to runCatching {
+                withContext(Dispatchers.IO) { JmEngine.getAlbumInfo(id) }
+            }.getOrNull()
+        }
+        val multiAlbums = resolved.mapNotNull { (id, info) ->
+            if (info != null && info.chapters.size > 1 &&
+                repo.tasks.value.none { it.jmId == id && it.chapterId == null }
+            ) {
+                PendingChapterAlbum(id, info.title, info.authors, info.chapters)
+            } else {
+                null
+            }
+        }
+        val selected: Map<String, Set<String>>? = if (multiAlbums.isNotEmpty()) {
+            val deferred = CompletableDeferred<Map<String, Set<String>>?>()
+            chapterSelectionDeferred = deferred
+            _pendingChapterSelection.value = multiAlbums
+            try {
+                deferred.await()
+            } finally {
+                _pendingChapterSelection.value = null
+                chapterSelectionDeferred = null
+            }
+        } else {
+            emptyMap()
+        }
+        if (multiAlbums.isNotEmpty() && selected == null) {
+            return@withLock "已取消添加"
+        }
+
         var added = 0
         val skipped = mutableListOf<String>()
-        ids.forEach { id ->
-            val err = addOneTask(id)
+        resolved.forEach { (id, info) ->
+            val selectedForAlbum = if ((info?.chapters?.size ?: 0) > 1) {
+                selected?.get(id).orEmpty()
+            } else {
+                null
+            }
+            val err = addResolvedTask(id, info, selectedForAlbum)
             if (err != null) skipped.add(err) else added++
         }
-        if (ids.isNotEmpty()) {
+        if (resolved.isNotEmpty()) {
             DownloadService.start(getApplication())
         }
 
@@ -174,7 +230,11 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun addOneTask(id: String): String? {
+    private fun addResolvedTask(
+        id: String,
+        info: JmEngine.AlbumInfo?,
+        selectedChapterIds: Set<String>?,
+    ): String? {
         // A legacy single-chapter task must not be expanded unexpectedly.
         val existingSingle = repo.tasks.value.firstOrNull { it.jmId == id && it.chapterId == null }
         if (existingSingle != null) {
@@ -188,9 +248,6 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        val info = runCatching {
-            withContext(Dispatchers.IO) { JmEngine.getAlbumInfo(id) }
-        }.getOrNull()
         val chapters = info?.chapters.orEmpty()
         if (chapters.size <= 1) {
             val taskId = UUID.randomUUID().toString()
@@ -210,12 +267,16 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             return null
         }
 
+        val selected = selectedChapterIds.orEmpty()
+        val chosen = chapters.filter { it.id in selected }
+        if (chosen.isEmpty()) return "JM$id 未选择章节"
+
         val baseTime = System.currentTimeMillis()
         val albumTitle = info?.title ?: "JM$id"
         val albumAuthors = info?.authors ?: emptyList()
         var added = 0
         var requeued = 0
-        chapters.forEachIndexed { index, chapter ->
+        chosen.forEachIndexed { index, chapter ->
             val existing = repo.tasks.value.firstOrNull { it.jmId == id && it.chapterId == chapter.id }
             if (existing != null) {
                 when (existing.status) {
@@ -245,7 +306,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             )
             added++
         }
-        AppLogger.i("chapter tasks created jmId=$id added=$added requeued=$requeued total=${chapters.size}")
+        AppLogger.i("chapter tasks created jmId=$id added=$added requeued=$requeued selected=${chosen.size}/${chapters.size}")
         return if (added > 0 || requeued > 0) null else "JM$id 的章节已在列表中"
     }
 
