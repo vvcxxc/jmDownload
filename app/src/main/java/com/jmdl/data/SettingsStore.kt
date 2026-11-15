@@ -32,9 +32,9 @@ class SettingsStore(context: Context) {
 
     /** Background image display mode: "fit" keeps the whole image, "crop" fills the screen. */
     var bgImageScale: String
-        get() = prefs.getString(KEY_BG_IMAGE_SCALE, "fit") ?: "fit"
+        get() = prefs.getString(KEY_BG_IMAGE_SCALE, "crop") ?: "crop"
         set(value) {
-            val mode = if (value == "crop") "crop" else "fit"
+            val mode = if (value == "fit") "fit" else "crop"
             prefs.edit().putString(KEY_BG_IMAGE_SCALE, mode).apply()
         }
 

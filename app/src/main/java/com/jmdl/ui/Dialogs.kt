@@ -690,22 +690,22 @@ internal fun BackgroundDialog(
                 Text("图片显示方式", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { onImageScale("crop") }) {
+                        Text(
+                            if (imageScale == "crop") "✓ 填充屏幕（推荐）" else "填充屏幕（推荐）",
+                            color = if (imageScale == "crop") themeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     TextButton(onClick = { onImageScale("fit") }) {
                         Text(
                             if (imageScale == "fit") "✓ 完整显示" else "完整显示",
                             color = if (imageScale == "fit") themeColor else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    TextButton(onClick = { onImageScale("crop") }) {
-                        Text(
-                            if (imageScale == "crop") "✓ 填充屏幕" else "填充屏幕",
-                            color = if (imageScale == "crop") themeColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "选图片后可拖动、双指缩放框选区域；不会拉伸或压缩图片。完整显示保留整张图，填充屏幕按当前屏幕比例显示。",
+                    "填充屏幕：图片铺满屏幕，多出的边缘会裁掉，不拉伸/压缩。完整显示：整张图都保留，比例不一致时可能留边。选图片时可拖动、双指缩放选择区域。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
