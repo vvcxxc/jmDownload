@@ -10,14 +10,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Button
@@ -188,6 +186,18 @@ private fun CropContent(
         }
     }
 
+    val confirmCrop = {
+        if (viewport.width > 0 && viewport.height > 0 && scale > 0f) {
+            val left = (-offset.x / scale).roundToInt().coerceIn(0, bitmap.width - 1)
+            val top = (-offset.y / scale).roundToInt().coerceIn(0, bitmap.height - 1)
+            val width = (viewport.width / scale).roundToInt()
+                .coerceIn(1, bitmap.width - left)
+            val height = (viewport.height / scale).roundToInt()
+                .coerceIn(1, bitmap.height - top)
+            onConfirm(Bitmap.createBitmap(bitmap, left, top, width, height))
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -238,36 +248,15 @@ private fun CropContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "拖动图片选择背景区域，双指缩放",
+                "拖动 / 双指缩放",
                 color = Color.White,
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onCancel) {
                 Text("取消", color = Color.White)
             }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .background(Color.Black.copy(alpha = 0.55f))
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
             Button(
-                onClick = {
-                    if (viewport.width <= 0 || viewport.height <= 0 || scale <= 0f) return@Button
-                    val left = (-offset.x / scale).roundToInt().coerceIn(0, bitmap.width - 1)
-                    val top = (-offset.y / scale).roundToInt().coerceIn(0, bitmap.height - 1)
-                    val width = (viewport.width / scale).roundToInt()
-                        .coerceIn(1, bitmap.width - left)
-                    val height = (viewport.height / scale).roundToInt()
-                        .coerceIn(1, bitmap.height - top)
-                    onConfirm(Bitmap.createBitmap(bitmap, left, top, width, height))
-                },
+                onClick = confirmCrop,
                 colors = ButtonDefaults.buttonColors(containerColor = themeColor),
             ) {
                 Text("使用这张背景")
