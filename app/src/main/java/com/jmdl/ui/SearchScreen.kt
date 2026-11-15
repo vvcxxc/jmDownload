@@ -84,7 +84,8 @@ data class SearchResultItem(
     val title: String?,
     val authors: List<String>?,
     val image: String?,
-    val pageCount: Int = 0
+    val pageCount: Int = 0,
+    val chapterCount: Int = 0,
 )
 
 @Composable
@@ -109,17 +110,20 @@ fun SearchScreen(
     var searchJob by remember { mutableStateOf<Job?>(null) }
     val tasks by vm.tasks.collectAsStateWithLifecycle()
     val taskStatusById = remember(tasks) { tasks.associate { it.jmId to it.status } }
-    val pageCounts = remember { mutableStateMapOf<String, Int>() }
-    val pageCountGate = remember { Semaphore(3) }
+    val albumSummaries = remember { mutableStateMapOf<String, JmEngine.AlbumSummary>() }
+    val albumSummaryGate = remember { Semaphore(3) }
 
-    fun requestPageCount(item: SearchResultItem) {
-        if (item.pageCount > 0 || pageCounts.containsKey(item.id)) return
+    fun requestAlbumSummary(item: SearchResultItem) {
+        if (albumSummaries.containsKey(item.id)) return
+        if (item.pageCount > 0 && item.chapterCount > 0) return
         scope.launch {
-            pageCountGate.withPermit {
-                val count = withContext(Dispatchers.IO) {
-                    JmEngine.getPageCount(item.id)
+            albumSummaryGate.withPermit {
+                val summary = withContext(Dispatchers.IO) {
+                    JmEngine.getAlbumSummary(item.id)
                 }
-                if (count > 0) pageCounts[item.id] = count
+                if (summary.pageCount > 0 || summary.chapterCount > 0) {
+                    albumSummaries[item.id] = summary
+                }
             }
         }
     }
@@ -172,7 +176,8 @@ fun SearchScreen(
                                 title = album.title,
                                 authors = album.authors,
                                 image = imageUrl,
-                                pageCount = album.pageCount
+                                pageCount = album.pageCount,
+                                chapterCount = album.photoMetas.size,
                             )
                             AppLogger.i("Search JM_ID: id=$query title=${album.title} cover=$imageUrl pages=${album.pageCount}")
                             withContext(Dispatchers.Main) {
@@ -355,23 +360,25 @@ fun SearchScreen(
                             onClick = {
                                 val toAdd = results.filter { it.id in selectedIds && it.title != null }
                                 AppLogger.i("Batch download: ${toAdd.size} items selected, ids=${toAdd.map { it.id }}")
-                                var added = 0
-                                var skipped = 0
-                                toAdd.forEach { item ->
-                                    val err = vm.addTask(item.id)
-                                    if (err == null) { added++; AppLogger.i("  added: id=${item.id}") }
-                                    else { skipped++; AppLogger.w("  skip: id=${item.id} err=$err") }
-                                }
-                                val msg = buildString {
-                                    if (added > 0) append("已加入 $added 个到下载列表")
-                                    if (skipped > 0) {
-                                        if (added > 0) append("，")
-                                        append("$skipped 个已在列表中")
+                                scope.launch {
+                                    var added = 0
+                                    var skipped = 0
+                                    toAdd.forEach { item ->
+                                        val err = vm.addTask(item.id)
+                                        if (err == null) { added++; AppLogger.i("  added: id=${item.id}") }
+                                        else { skipped++; AppLogger.w("  skip: id=${item.id} err=$err") }
                                     }
+                                    val msg = buildString {
+                                        if (added > 0) append("已加入 $added 个到下载列表")
+                                        if (skipped > 0) {
+                                            if (added > 0) append("，")
+                                            append("$skipped 个已在列表中")
+                                        }
+                                    }
+                                    if (msg.isNotEmpty()) snackbar(msg)
+                                    selectionMode = false
+                                    selectedIds = emptySet()
                                 }
-                                if (msg.isNotEmpty()) snackbar(msg)
-                                selectionMode = false
-                                selectedIds = emptySet()
                             },
                             enabled = selectedIds.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(containerColor = themeColor),
@@ -423,14 +430,16 @@ fun SearchScreen(
                 contentPadding = PaddingValues(bottom = 12.dp)
             ) {
                 items(results.filter { it.title != null }, key = { it.id }) { item ->
+                    val summary = albumSummaries[item.id]
                     SearchResultRow(
                         item = item,
                         selectionMode = selectionMode,
                         isSelected = item.id in selectedIds,
                         existingStatus = taskStatusById[item.id],
-                        pageCount = pageCounts[item.id] ?: item.pageCount,
+                        pageCount = summary?.pageCount ?: item.pageCount,
+                        chapterCount = summary?.chapterCount ?: item.chapterCount,
                         themeColor = themeColor,
-                        onRequestPageCount = { requestPageCount(item) },
+                        onRequestAlbumSummary = { requestAlbumSummary(item) },
                         onToggleSelect = {
                             selectedIds = if (item.id in selectedIds)
                                 selectedIds - item.id
@@ -444,12 +453,14 @@ fun SearchScreen(
                         onDownload = {
                             val wasFailed = taskStatusById[item.id] == TaskStatus.FAILED
                             AppLogger.i("Single download from search: id=${item.id} wasFailed=$wasFailed")
-                            val err: String? = vm.addTask(item.id)
-                            if (err == null) {
-                                snackbar(if (wasFailed) "JM${item.id} 已重新加入下载列表" else "JM${item.id} 已加入下载列表")
-                            } else {
-                                AppLogger.w("Single download failed: id=${item.id} err=$err")
-                                snackbar(err)
+                            scope.launch {
+                                val err: String? = vm.addTask(item.id)
+                                if (err == null) {
+                                    snackbar(if (wasFailed) "JM${item.id} 已重新加入下载列表" else "JM${item.id} 已加入下载列表")
+                                } else {
+                                    AppLogger.w("Single download failed: id=${item.id} err=$err")
+                                    snackbar(err)
+                                }
                             }
                         }
                     )
@@ -487,8 +498,9 @@ private fun SearchResultRow(
     isSelected: Boolean,
     existingStatus: TaskStatus?,
     pageCount: Int,
+    chapterCount: Int,
     themeColor: Color,
-    onRequestPageCount: () -> Unit,
+    onRequestAlbumSummary: () -> Unit,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
     onDownload: () -> Unit,
@@ -498,8 +510,8 @@ private fun SearchResultRow(
     val isFailed = existingStatus == TaskStatus.FAILED
     var showPreview by remember(item.id) { mutableStateOf(false) }
 
-    LaunchedEffect(item.id, pageCount) {
-        if (pageCount <= 0) onRequestPageCount()
+    LaunchedEffect(item.id, pageCount, chapterCount) {
+        if (pageCount <= 0 && chapterCount <= 1) onRequestAlbumSummary()
     }
 
     Card(
@@ -587,10 +599,16 @@ private fun SearchResultRow(
                         }
                     }
 
-                    if (pageCount > 0) {
+                    val metaText = when {
+                        chapterCount > 1 && pageCount > 0 -> "多章节 · ${chapterCount}章 · ${pageCount}页"
+                        chapterCount > 1 -> "多章节 · ${chapterCount}章"
+                        pageCount > 0 -> "${pageCount}页"
+                        else -> null
+                    }
+                    if (metaText != null) {
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            text = "${pageCount}页",
+                            text = metaText,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

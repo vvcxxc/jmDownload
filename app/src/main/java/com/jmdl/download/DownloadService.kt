@@ -152,20 +152,39 @@ class DownloadService : Service() {
 
         try {
             requireRunning(taskId)
-            AppLogger.i("Task phase=INFO taskId=$taskId jmId=$jmId")
-            val info = runWithTimeout(taskId, TITLE_TIMEOUT_MS) { JmEngine.getAlbumInfo(jmId) }
-            val title = info.title
-            repo.update(taskId) { it.copy(title = title, authors = info.authors) }
+            val isChapter = task.chapterId != null
+            AppLogger.i("Task phase=INFO taskId=$taskId jmId=$jmId chapterId=${task.chapterId}")
+            val info = if (isChapter) null else {
+                runWithTimeout(taskId, TITLE_TIMEOUT_MS) { JmEngine.getAlbumInfo(jmId) }
+            }
+            val title = if (isChapter) {
+                task.chapterTitle ?: task.title ?: "第1章"
+            } else {
+                info!!.title
+            }
+            val albumTitle = if (isChapter) {
+                task.albumTitle ?: task.title ?: "JM$jmId"
+            } else {
+                title
+            }
+            repo.update(taskId) {
+                it.copy(
+                    title = title,
+                    authors = info?.authors ?: it.authors,
+                    albumTitle = albumTitle,
+                    chapterCount = info?.chapters?.size ?: it.chapterCount,
+                )
+            }
 
             requireRunning(taskId)
-            AppLogger.i("Task phase=DOWNLOAD taskId=$taskId jmId=$jmId title=$title authors=${info.authors}")
+            AppLogger.i("Task phase=DOWNLOAD taskId=$taskId jmId=$jmId title=$title chapter=${task.chapterId}")
             val outcome = runWithTimeout(taskId, DOWNLOAD_TIMEOUT_MS) {
                 var lastTick = 0L
                 var lastProgressAt = System.currentTimeMillis()
                 var lastReportedDone = 0
                 var lastReportedTotal = 0
 
-                JmEngine.download(jmId, workDir) { done, total ->
+                val onProgress: (Int, Int) -> Unit = { done, total ->
                     if (taskId !in activeTaskIds) {
                         AppLogger.w("Download stopped, taskId=$taskId is no longer active")
                         throw CancellationException("Download cancelled for taskId=$taskId")
@@ -193,7 +212,6 @@ class DownloadService : Service() {
                         lastProgressAt = now
                         lastReportedDone = safeDone
                         lastReportedTotal = safeTotal
-                        // Log per completed page instead of every 300ms tick.
                         AppLogger.i("Download progress taskId=$taskId: $safeDone/$safeTotal")
                     }
 
@@ -201,6 +219,12 @@ class DownloadService : Service() {
                         AppLogger.e("Download stalled taskId=$taskId, lastProgress=${safeDone}/${safeTotal}, idle=${now - lastProgressAt}ms")
                         throw TimeoutException("下载卡住，${STALLED_PROGRESS_MS / 1000}秒无进度")
                     }
+                }
+
+                if (isChapter) {
+                    JmEngine.downloadPhoto(task.chapterId!!, workDir, onProgress)
+                } else {
+                    JmEngine.download(jmId, workDir, onProgress)
                 }
             }
 
@@ -217,7 +241,11 @@ class DownloadService : Service() {
             repo.update(taskId) { it.copy(status = TaskStatus.ZIPPING) }
             updateAggregateNotif()
 
-            val zipName = FilenameSanitizer.zipName(jmId, title)
+            val zipName = if (isChapter) {
+                FilenameSanitizer.chapterZipName(jmId, albumTitle, title)
+            } else {
+                FilenameSanitizer.zipName(jmId, title)
+            }
             val treeUriStr = settings.saveTreeUri
             val saved = Storage.saveZip(this, workDir, zipName, treeUriStr)
 

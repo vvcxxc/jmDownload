@@ -62,6 +62,7 @@ internal fun TaskRow(
     isLastViewed: Boolean,
     selectionMode: Boolean,
     selected: Boolean,
+    compact: Boolean = false,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
@@ -79,7 +80,8 @@ internal fun TaskRow(
     val coverFile = remember(t.fileUri, t.jmId) { CoverCache.getCoverFile(context, t.jmId) }
     var showPreview by remember { mutableStateOf(false) }
     var coverReady by remember(t.fileUri, t.jmId) { mutableStateOf(coverFile.exists()) }
-    LaunchedEffect(t.fileUri, t.jmId) {
+    LaunchedEffect(t.fileUri, t.jmId, compact) {
+        if (compact) return@LaunchedEffect
         if (coverFile.exists()) {
             coverReady = true
             AppLogger.i("Cover preview: id=${t.jmId} cached")
@@ -108,7 +110,7 @@ internal fun TaskRow(
         colors = appCardColors()
     ) {
         Row(Modifier.padding(12.dp)) {
-            if (coverReady) {
+            if (coverReady && !compact) {
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(coverFile).crossfade(true).build(),
                     contentDescription = "封面",
@@ -135,16 +137,26 @@ internal fun TaskRow(
                     Spacer(Modifier.width(4.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    val displayName = if (t.jmId.all { it.isDigit() }) "JM${t.jmId}" else t.title ?: t.jmId
+                    val displayName = if (compact) {
+                        t.chapterTitle ?: t.title ?: "第1章"
+                    } else if (t.jmId.all { it.isDigit() }) {
+                        "JM${t.jmId}"
+                    } else {
+                        t.title ?: t.jmId
+                    }
                     val copyTitle = t.title ?: "JM${t.jmId}"
                     Text(
-                        displayName + (t.title?.let { if (t.jmId.all { it.isDigit() }) " · $it" else "" } ?: ""),
+                        if (compact) {
+                            displayName
+                        } else {
+                            displayName + (t.title?.let { if (t.jmId.all { it.isDigit() }) " · $it" else "" } ?: "")
+                        },
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.pointerInput(copyTitle) {
                             detectTapGestures(onLongPress = { onCopyText(copyTitle) })
                         },
                     )
-                    if (t.authors.isNotEmpty()) {
+                    if (!compact && t.authors.isNotEmpty()) {
                         Spacer(Modifier.height(4.dp))
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -181,7 +193,7 @@ internal fun TaskRow(
                         }
                     }
                     Text(
-                        statusText(t),
+                        statusText(t, compact),
                         style = MaterialTheme.typography.bodySmall,
                         color = statusColor(t),
                     )
@@ -291,13 +303,13 @@ internal fun TaskRow(
 }
 
 
-private fun statusText(t: Task): String = when (t.status) {
+private fun statusText(t: Task, compact: Boolean = false): String = when (t.status) {
     TaskStatus.QUEUED -> "排队中"
     TaskStatus.RUNNING -> if (t.total > 0) "下载中 ${t.done}/${t.total}" else "下载中…"
     TaskStatus.ZIPPING -> "打包中…"
     TaskStatus.DONE -> buildString {
         append(t.message ?: "完成")
-        t.zipName?.let { append(" · ").append(it) }
+        if (!compact) t.zipName?.let { append(" · ").append(it) }
     }
     TaskStatus.FAILED -> "失败：${t.message ?: "未知错误"}"
     TaskStatus.PAUSED -> "已暂停"

@@ -22,13 +22,27 @@ object FilenameSanitizer {
 
     fun zipName(id: String, title: String): String {
         val safeTitle = sanitizeTitle(title).ifEmpty { "JM$id" }
+        return buildZipName(id, safeTitle)
+    }
+
+    fun chapterZipName(id: String, albumTitle: String?, chapterTitle: String): String {
+        val safeAlbum = albumTitle?.let(::sanitizeTitle).orEmpty()
+        val safeChapter = sanitizeTitle(chapterTitle).ifEmpty { "第1章" }
+        val body = listOf(safeAlbum, safeChapter)
+            .filter { it.isNotEmpty() }
+            .joinToString("-")
+            .ifEmpty { "JM$id" }
+        return buildZipName(id, body)
+    }
+
+    private fun buildZipName(id: String, body: String): String {
         val prefix = "JM$id-"
         val ext = ".zip"
         val budget = MAX_BYTES -
             prefix.toByteArray(Charsets.UTF_8).size -
             ext.toByteArray(Charsets.UTF_8).size
-        val body = truncateUtf8(safeTitle, budget).ifEmpty { "JM$id" }
-        return "$prefix$body$ext"
+        val safeBody = truncateUtf8(body, budget).ifEmpty { "JM$id" }
+        return "$prefix$safeBody$ext"
     }
 
     private fun truncateUtf8(s: String, maxBytes: Int): String {

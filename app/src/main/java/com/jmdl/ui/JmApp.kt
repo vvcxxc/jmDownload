@@ -129,6 +129,7 @@ fun JmApp(vm: TaskViewModel) {
     var cropOutputUri by remember { mutableStateOf<Uri?>(null) }
     val listState = rememberLazyListState()
     val stickyUnreadIds = remember { mutableStateOf(setOf<String>()) }
+    var expandedGroups by remember { mutableStateOf(setOf<String>()) }
 
     LaunchedEffect(currentFilter) {
         if (currentFilter == TaskFilter.UNREAD) {
@@ -152,29 +153,37 @@ fun JmApp(vm: TaskViewModel) {
     }
 
     val tabCounts = remember(tasks) {
-        val all = tasks.count { it.status == TaskStatus.DONE || it.status == TaskStatus.FAILED }
-        val unread = tasks.count { it.status == TaskStatus.DONE && it.currentPage == null }
-        val done = tasks.count { it.status == TaskStatus.DONE }
-        val running = tasks.count { it.status in setOf(TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED, TaskStatus.PAUSED) }
-        val failed = tasks.count { it.status == TaskStatus.FAILED || (it.status == TaskStatus.DONE && it.failed > 0) }
+        val groups = buildTaskGroups(tasks)
+        val all = groups.count { group -> group.tasks.any { it.status == TaskStatus.DONE || it.status == TaskStatus.FAILED } }
+        val unread = groups.count { group -> group.tasks.any { it.status == TaskStatus.DONE && it.currentPage == null } }
+        val done = groups.count { group -> group.tasks.any { it.status == TaskStatus.DONE } }
+        val running = groups.count { group -> group.tasks.any { it.status in setOf(TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED, TaskStatus.PAUSED) } }
+        val failed = groups.count { group -> group.tasks.any { it.status == TaskStatus.FAILED || (it.status == TaskStatus.DONE && it.failed > 0) } }
         mapOf(TaskFilter.ALL to all, TaskFilter.UNREAD to unread, TaskFilter.DONE to done, TaskFilter.RUNNING to running, TaskFilter.FAILED to failed)
     }
 
-    val filteredTasks = remember(tasks, currentFilter, stickyUnreadIds.value) {
-        val list = tasks.filter { task ->
-            when (currentFilter) {
-                TaskFilter.ALL -> task.status == TaskStatus.DONE || task.status == TaskStatus.FAILED
-                TaskFilter.UNREAD -> task.id in stickyUnreadIds.value
-                TaskFilter.DONE -> task.status == TaskStatus.DONE
-                TaskFilter.RUNNING -> task.status == TaskStatus.RUNNING || task.status == TaskStatus.ZIPPING || task.status == TaskStatus.QUEUED || task.status == TaskStatus.PAUSED
-                TaskFilter.FAILED -> task.status == TaskStatus.FAILED || (task.status == TaskStatus.DONE && task.failed > 0)
-            }
-        }
+    fun matchesFilter(task: Task): Boolean = when (currentFilter) {
+        TaskFilter.ALL -> task.status == TaskStatus.DONE || task.status == TaskStatus.FAILED
+        TaskFilter.UNREAD -> task.id in stickyUnreadIds.value
+        TaskFilter.DONE -> task.status == TaskStatus.DONE
+        TaskFilter.RUNNING -> task.status == TaskStatus.RUNNING || task.status == TaskStatus.ZIPPING || task.status == TaskStatus.QUEUED || task.status == TaskStatus.PAUSED
+        TaskFilter.FAILED -> task.status == TaskStatus.FAILED || (task.status == TaskStatus.DONE && task.failed > 0)
+    }
+
+    val sortedTasks = remember(tasks, currentFilter) {
         if (currentFilter == TaskFilter.RUNNING) {
-            list.sortedBy { if (it.status == TaskStatus.PAUSED) Long.MAX_VALUE else it.createdAt }
+            tasks.sortedBy { if (it.status == TaskStatus.PAUSED) Long.MAX_VALUE else it.createdAt }
         } else {
-            list.sortedByDescending { it.finishedAt ?: it.createdAt }
+            tasks.sortedByDescending { it.finishedAt ?: it.createdAt }
         }
+    }
+
+    val filteredTasks = remember(sortedTasks, currentFilter, stickyUnreadIds.value) {
+        sortedTasks.filter { matchesFilter(it) }
+    }
+
+    val filteredGroups = remember(sortedTasks, currentFilter, stickyUnreadIds.value) {
+        buildTaskGroups(sortedTasks).filter { group -> group.tasks.any { matchesFilter(it) } }
     }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -280,7 +289,11 @@ fun JmApp(vm: TaskViewModel) {
 
     LaunchedEffect(lastViewedId) {
         if (lastViewedId != null) {
-            val idx = filteredTasks.indexOfFirst { it.id == lastViewedId }
+            val idx = if (selectionMode) {
+                filteredTasks.indexOfFirst { it.id == lastViewedId }
+            } else {
+                filteredGroups.indexOfFirst { group -> group.tasks.any { it.id == lastViewedId } }
+            }
             if (idx >= 0) {
                 listState.animateScrollToItem(idx)
             }
@@ -289,9 +302,10 @@ fun JmApp(vm: TaskViewModel) {
 
     val prevTaskCount = remember { mutableStateOf(0) }
     val prevFilter = remember { mutableStateOf(currentFilter) }
-    LaunchedEffect(filteredTasks.size, currentFilter) {
-        val current = filteredTasks.size
-        if (currentFilter != prevFilter.value) {
+    val visibleItemCount = if (selectionMode) filteredTasks.size else filteredGroups.size
+    LaunchedEffect(visibleItemCount, currentFilter, selectionMode) {
+        val current = visibleItemCount
+        if (currentFilter != prevFilter.value || selectionMode) {
             listState.animateScrollToItem(0)
         } else if (current > prevTaskCount.value) {
             listState.animateScrollToItem(0)
@@ -398,15 +412,15 @@ fun JmApp(vm: TaskViewModel) {
                             value = input,
                             onValueChange = { input = it },
                             onAdd = {
-                                val err = vm.addTask(input)
-                                currentFilter = TaskFilter.RUNNING
-                                if (err == null) {
-                                    input = ""
-                                    focus.clearFocus()
-                                } else {
-                                    input = ""
-                                    focus.clearFocus()
-                                    scope.launch { snackbar.showSnackbar(err) }
+                                val text = input
+                                input = ""
+                                focus.clearFocus()
+                                if (text.isNotBlank()) {
+                                    currentFilter = TaskFilter.RUNNING
+                                    scope.launch {
+                                        val err = vm.addTask(text)
+                                        if (err != null) snackbar.showSnackbar(err)
+                                    }
                                 }
                             },
                         )
@@ -456,36 +470,90 @@ fun JmApp(vm: TaskViewModel) {
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(bottom = 12.dp),
                         ) {
-                            items(filteredTasks, key = { it.id }) { t ->
-                                TaskRow(
-                                    t = t,
-                                    isLastViewed = t.id == lastViewedId,
-                                    selectionMode = selectionMode,
-                                    selected = t.id in selected,
-                                    onOpen = {
-                                        if (t.status == TaskStatus.DONE && t.zipName != null) {
-                                            focus.clearFocus()
-                                            viewing = t
-                                        }
-                                    },
-                                    onToggleSelect = {
-                                        selected = if (t.id in selected) selected - t.id else selected + t.id
-                                    },
-                                    onEnterSelect = {
-                                        selectionMode = true
-                                        selected = selected + t.id
-                                    },
-                                    onCopyText = { text ->
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        clipboard.setPrimaryClip(ClipData.newPlainText("text", text))
-                                        scope.launch { snackbar.showSnackbar("已复制") }
-                                    },
-                                    onRequestAuthors = { vm.ensureAuthors(t.id) },
-                                    onRetry = { vm.retry(t.id) },
-                                    onPause = { vm.pause(t.id) },
-                                    onResume = { vm.resume(t.id) },
-                                    onRemove = { pendingDelete = t },
-                                )
+                            val copyText: (String) -> Unit = { text ->
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("text", text))
+                                scope.launch { snackbar.showSnackbar("已复制") }
+                            }
+                            if (selectionMode) {
+                                items(filteredTasks, key = { it.id }) { t ->
+                                    TaskRow(
+                                        t = t,
+                                        isLastViewed = t.id == lastViewedId,
+                                        selectionMode = true,
+                                        selected = t.id in selected,
+                                        onOpen = {},
+                                        onToggleSelect = {
+                                            selected = if (t.id in selected) selected - t.id else selected + t.id
+                                        },
+                                        onEnterSelect = {},
+                                        onCopyText = copyText,
+                                        onRequestAuthors = { vm.ensureAuthors(t.id) },
+                                        onRetry = { vm.retry(t.id) },
+                                        onPause = { vm.pause(t.id) },
+                                        onResume = { vm.resume(t.id) },
+                                        onRemove = { pendingDelete = t },
+                                    )
+                                }
+                            } else {
+                                items(filteredGroups, key = { it.albumId }) { group ->
+                                    if (!group.isMultiChapter) {
+                                        val t = group.tasks.first()
+                                        TaskRow(
+                                            t = t,
+                                            isLastViewed = t.id == lastViewedId,
+                                            selectionMode = false,
+                                            selected = false,
+                                            onOpen = {
+                                                if (t.status == TaskStatus.DONE && t.zipName != null) {
+                                                    focus.clearFocus()
+                                                    viewing = t
+                                                }
+                                            },
+                                            onToggleSelect = {},
+                                            onEnterSelect = {
+                                                selectionMode = true
+                                                selected = selected + t.id
+                                            },
+                                            onCopyText = copyText,
+                                            onRequestAuthors = { vm.ensureAuthors(t.id) },
+                                            onRetry = { vm.retry(t.id) },
+                                            onPause = { vm.pause(t.id) },
+                                            onResume = { vm.resume(t.id) },
+                                            onRemove = { pendingDelete = t },
+                                        )
+                                    } else {
+                                        TaskGroupRow(
+                                            group = group,
+                                            expanded = group.albumId in expandedGroups,
+                                            lastViewedId = lastViewedId,
+                                            onToggle = {
+                                                expandedGroups = if (group.albumId in expandedGroups) {
+                                                    expandedGroups - group.albumId
+                                                } else {
+                                                    expandedGroups + group.albumId
+                                                }
+                                            },
+                                            onOpen = { t ->
+                                                if (t.status == TaskStatus.DONE && t.zipName != null) {
+                                                    focus.clearFocus()
+                                                    viewing = t
+                                                }
+                                            },
+                                            onToggleSelect = {},
+                                            onEnterSelect = { t ->
+                                                selectionMode = true
+                                                selected = selected + t.id
+                                            },
+                                            onCopyText = copyText,
+                                            onRequestAuthors = { t -> vm.ensureAuthors(t.id) },
+                                            onRetry = { t -> vm.retry(t.id) },
+                                            onPause = { t -> vm.pause(t.id) },
+                                            onResume = { t -> vm.resume(t.id) },
+                                            onRemove = { t -> pendingDelete = t },
+                                        )
+                                    }
+                                }
                             }
                         }
 

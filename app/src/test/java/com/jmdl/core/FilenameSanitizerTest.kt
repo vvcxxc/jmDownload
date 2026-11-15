@@ -25,6 +25,14 @@ class FilenameSanitizerTest {
     }
 
     @Test
+    fun chapterZipNameIncludesAlbumAndChapter() {
+        assertEquals(
+            "JM1229332-Wanna Join the Company-第2章.zip",
+            FilenameSanitizer.chapterZipName("1229332", "Wanna Join the Company?", "第2章"),
+        )
+    }
+
+    @Test
     fun longCjkTitleStaysWithinByteBudget() {
         val name = FilenameSanitizer.zipName("350234", "很".repeat(300))
         assertTrue(name.toByteArray(StandardCharsets.UTF_8).size <= 200)

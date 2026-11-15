@@ -27,7 +27,15 @@ object JmEngine {
 
     data class Outcome(val total: Int, val success: Int, val failed: Int)
 
-    data class AlbumInfo(val title: String, val authors: List<String>)
+    data class ChapterInfo(val id: String, val title: String, val sortOrder: Int)
+
+    data class AlbumInfo(
+        val title: String,
+        val authors: List<String>,
+        val chapters: List<ChapterInfo> = emptyList(),
+    )
+
+    data class AlbumSummary(val pageCount: Int, val chapterCount: Int)
 
     fun getAlbumInfo(jmId: String): AlbumInfo {
         return try {
@@ -43,8 +51,15 @@ object JmEngine {
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()
-            AppLogger.i("Album info jmId=$jmId title=$safeTitle authors=$authors")
-            AlbumInfo(safeTitle, authors)
+            val chapters = album.photoMetas
+                .map { meta ->
+                    val chapterTitle = meta.title?.trim().orEmpty()
+                        .ifEmpty { "第${meta.sortOrder}章" }
+                    ChapterInfo(meta.id, chapterTitle, meta.sortOrder)
+                }
+                .sortedBy { it.sortOrder }
+            AppLogger.i("Album info jmId=$jmId title=$safeTitle authors=$authors chapters=${chapters.size}")
+            AlbumInfo(safeTitle, authors, chapters)
         } catch (e: Exception) {
             AppLogger.e("Failed to get album info for jmId=$jmId", e)
             throw e
@@ -91,6 +106,48 @@ object JmEngine {
             
         } catch (e: Exception) {
             AppLogger.e("Download failed jmId=$jmId", e)
+            throw e
+        }
+    }
+
+    fun downloadPhoto(
+        photoId: String,
+        workDir: File,
+        onProgress: (done: Int, total: Int) -> Unit,
+    ): Outcome {
+        return try {
+            val c = client()
+            val photo = c.getPhoto(photoId)
+            if (!workDir.exists()) {
+                workDir.mkdirs()
+                AppLogger.i("Created chapter work directory: ${workDir.path}")
+            }
+
+            var stableTotal = 0
+            val result = c.download(photo)
+                .withPath(workDir.toPath())
+                .withProgress { p ->
+                    val reportedTotal = p.totalImages()
+                    val reportedDone = p.completedImages()
+                    if (reportedTotal > 0) {
+                        stableTotal = if (stableTotal == 0 || reportedTotal < stableTotal) {
+                            reportedTotal
+                        } else {
+                            stableTotal
+                        }
+                    }
+                    val (safeDone, safeTotal) = calculateSafeProgress(reportedDone, reportedTotal, stableTotal)
+                    onProgress(safeDone, safeTotal)
+                }
+                .execute()
+
+            val success = result.successfulFiles.size
+            val failed = result.failedTasks.size
+            val total = stableTotal.coerceAtLeast(success + failed)
+            AppLogger.i("Chapter download completed photoId=$photoId success=$success failed=$failed total=$total")
+            Outcome(total = total, success = success, failed = failed)
+        } catch (e: Exception) {
+            AppLogger.e("Chapter download failed photoId=$photoId", e)
             throw e
         }
     }
@@ -148,6 +205,29 @@ object JmEngine {
             return runCatching { client().getComicRead(jmId).pageCount }.getOrDefault(0)
         }
         return 0
+    }
+
+    /**
+     * Lightweight metadata for search rows. Multi-chapter albums report their chapter count;
+     * total page count is only resolved for single-chapter albums to avoid fetching every chapter.
+     */
+    fun getAlbumSummary(jmId: String): AlbumSummary {
+        val album = runCatching { client().getAlbum(jmId) }.getOrNull()
+            ?: return AlbumSummary(0, 0)
+        val chapterCount = when {
+            album.photoMetas.isNotEmpty() -> album.photoMetas.size
+            album.pageCount > 0 || album.images.isNotEmpty() -> 1
+            else -> 0
+        }
+        val pageCount = when {
+            album.pageCount > 0 -> album.pageCount
+            album.images.isNotEmpty() -> album.images.size
+            chapterCount == 1 -> runCatching {
+                client().getPhoto(album.photoMetas.first().id).images.size
+            }.getOrDefault(0)
+            else -> 0
+        }
+        return AlbumSummary(pageCount, chapterCount)
     }
 
     fun searchByKeyword(keyword: String, page: Int = 1): JmSearchPage {

@@ -7,6 +7,11 @@ data class Task(
     val jmId: String,             // JM album id
     val title: String? = null,    // resolved album title (once known)
     val authors: List<String> = emptyList(), // resolved album authors (once known)
+    val albumTitle: String? = null, // parent album title (multi-chapter tasks)
+    val chapterId: String? = null,  // JM photo/chapter id; null for single-chapter albums
+    val chapterTitle: String? = null,
+    val chapterIndex: Int? = null,
+    val chapterCount: Int? = null,
     val status: TaskStatus = TaskStatus.QUEUED,
     val done: Int = 0,            // images downloaded so far
     val total: Int = 0,          // total images (0 = unknown yet)
@@ -19,4 +24,6 @@ data class Task(
     val finishedAt: Long? = null, // completion or failure time
     val currentPage: Int? = null, // last page the user read in the viewer
     val pageCount: Int? = null,   // total pages in the saved zip
-)
+) {
+    val isChapter: Boolean get() = chapterId != null
+}

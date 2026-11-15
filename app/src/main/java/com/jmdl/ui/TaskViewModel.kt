@@ -24,7 +24,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -63,6 +65,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val authorLookupAttempted = mutableSetOf<String>()
     private val authorLookupLock = Any()
     private val authorLookupSemaphore = Semaphore(1)
+    private val addMutex = Mutex()
 
     fun clearImportResult() {
         _importResult.value = null
@@ -150,9 +153,9 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         AppLogger.i("settings maxConcurrent changed -> $count")
     }
 
-    fun addTask(input: String): String? {
+    suspend fun addTask(input: String): String? = addMutex.withLock {
         val ids = JmIdParser.parseAll(input)
-        if (ids.isEmpty()) return "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
+        if (ids.isEmpty()) return@withLock "识别不到车号。用法：JM 350234（也可直接粘贴带链接的文本）"
 
         var added = 0
         val skipped = mutableListOf<String>()
@@ -164,37 +167,86 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             DownloadService.start(getApplication())
         }
 
-        return when {
+        when {
             added > 0 && skipped.isEmpty() -> null  // 全部成功，不提示
             added > 0 -> "添加 $added 个，${skipped.joinToString("，")}"  // 部分成功
             else -> skipped.joinToString("，")  // 全部失败
         }
     }
 
-    private fun addOneTask(id: String): String? {
-        val existing = repo.tasks.value.firstOrNull { it.jmId == id }
-        if (existing != null) {
-            when (existing.status) {
+    private suspend fun addOneTask(id: String): String? {
+        // A legacy single-chapter task must not be expanded unexpectedly.
+        val existingSingle = repo.tasks.value.firstOrNull { it.jmId == id && it.chapterId == null }
+        if (existingSingle != null) {
+            when (existingSingle.status) {
                 TaskStatus.DONE -> return "JM$id 已下载完成"
                 TaskStatus.RUNNING, TaskStatus.ZIPPING, TaskStatus.QUEUED, TaskStatus.PAUSED -> return "JM$id 已在列表中"
                 TaskStatus.FAILED -> {
-                    resetFailedTask(existing)
+                    resetFailedTask(existingSingle)
                     return null
                 }
             }
         }
 
-        val taskId = UUID.randomUUID().toString()
-        repo.add(
-            Task(
-                id = taskId,
-                jmId = id,
-                status = TaskStatus.QUEUED,
-                createdAt = System.currentTimeMillis(),
+        val info = runCatching {
+            withContext(Dispatchers.IO) { JmEngine.getAlbumInfo(id) }
+        }.getOrNull()
+        val chapters = info?.chapters.orEmpty()
+        if (chapters.size <= 1) {
+            val taskId = UUID.randomUUID().toString()
+            repo.add(
+                Task(
+                    id = taskId,
+                    jmId = id,
+                    title = info?.title,
+                    authors = info?.authors ?: emptyList(),
+                    albumTitle = info?.title,
+                    chapterCount = info?.chapters?.size?.takeIf { it > 0 },
+                    status = TaskStatus.QUEUED,
+                    createdAt = System.currentTimeMillis(),
+                )
             )
-        )
-        AppLogger.i("task created jmId=$id taskId=$taskId")
-        return null
+            AppLogger.i("task created jmId=$id taskId=$taskId")
+            return null
+        }
+
+        val baseTime = System.currentTimeMillis()
+        val albumTitle = info?.title ?: "JM$id"
+        val albumAuthors = info?.authors ?: emptyList()
+        var added = 0
+        var requeued = 0
+        chapters.forEachIndexed { index, chapter ->
+            val existing = repo.tasks.value.firstOrNull { it.jmId == id && it.chapterId == chapter.id }
+            if (existing != null) {
+                when (existing.status) {
+                    TaskStatus.DONE, TaskStatus.RUNNING, TaskStatus.ZIPPING,
+                    TaskStatus.QUEUED, TaskStatus.PAUSED -> Unit
+                    TaskStatus.FAILED -> {
+                        resetFailedTask(existing)
+                        requeued++
+                    }
+                }
+                return@forEachIndexed
+            }
+            repo.add(
+                Task(
+                    id = UUID.randomUUID().toString(),
+                    jmId = id,
+                    title = chapter.title,
+                    authors = albumAuthors,
+                    albumTitle = albumTitle,
+                    chapterId = chapter.id,
+                    chapterTitle = chapter.title,
+                    chapterIndex = chapter.sortOrder,
+                    chapterCount = chapters.size,
+                    status = TaskStatus.QUEUED,
+                    createdAt = baseTime + index,
+                )
+            )
+            added++
+        }
+        AppLogger.i("chapter tasks created jmId=$id added=$added requeued=$requeued total=${chapters.size}")
+        return if (added > 0 || requeued > 0) null else "JM$id 的章节已在列表中"
     }
 
     private fun resetFailedTask(t: Task) {

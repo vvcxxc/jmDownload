@@ -67,6 +67,11 @@ class TaskRepository private constructor(private val file: File) {
             jmId = o.getString("jmId"),
             title = o.optString("title").ifEmpty { null },
             authors = parseAuthors(o.optJSONArray("authors")),
+            albumTitle = o.optString("albumTitle").ifEmpty { null },
+            chapterId = o.optString("chapterId").ifEmpty { null },
+            chapterTitle = o.optString("chapterTitle").ifEmpty { null },
+            chapterIndex = o.optInt("chapterIndex", -1).takeIf { it >= 0 },
+            chapterCount = o.optInt("chapterCount", -1).takeIf { it > 0 },
             status = runCatching { TaskStatus.valueOf(o.getString("status")) }
                 .getOrDefault(TaskStatus.QUEUED),
             done = o.optInt("done"),
@@ -120,6 +125,11 @@ class TaskRepository private constructor(private val file: File) {
             put("jmId", t.jmId)
             put("title", t.title ?: "")
             put("authors", JSONArray().apply { t.authors.forEach { put(it) } })
+            put("albumTitle", t.albumTitle ?: "")
+            put("chapterId", t.chapterId ?: "")
+            put("chapterTitle", t.chapterTitle ?: "")
+            put("chapterIndex", t.chapterIndex ?: -1)
+            put("chapterCount", t.chapterCount ?: -1)
             put("status", t.status.name)
             put("done", t.done)
             put("total", t.total)
