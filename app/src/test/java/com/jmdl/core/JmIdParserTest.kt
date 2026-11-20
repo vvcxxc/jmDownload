@@ -32,6 +32,19 @@ class JmIdParserTest {
     }
 
     @Test
+    fun parsesCommaSeparatedIdsFromUserExample() {
+        assertEquals(listOf("11111", "2222222"), JmIdParser.parseAll("11111,2222222"))
+        assertEquals(listOf("11111", "2222222"), JmIdParser.parseAll("jm11111,JM2222222"))
+    }
+
+    @Test
+    fun parsesWhitespaceOrNewlineSeparatedIds() {
+        assertEquals(listOf("11111", "2222222"), JmIdParser.parseAll("11111 2222222"))
+        assertEquals(listOf("11111", "2222222"), JmIdParser.parseAll("JM 11111\nJM 2222222"))
+        assertEquals(listOf("11111", "2222222"), JmIdParser.parseAll("11111、2222222"))
+    }
+
+    @Test
     fun splitsConcatenatedPrefixedIds() {
         assertEquals(
             listOf("428980", "433633", "435515"),

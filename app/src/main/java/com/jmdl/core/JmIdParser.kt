@@ -9,8 +9,10 @@ object JmIdParser {
     private val JM_PREFIXED = Regex("(?i)jm\\s*(\\d{3,})")
     private val URL_PATH = Regex("(?i)(?:photos?|albums?)/(\\d{3,})")
     private val URL_QUERY = Regex("(?i)[?&]id=(\\d{3,})")
-    private val SEPARATORS = Regex("[,，;；]+")
+    private val SEPARATORS = Regex("[,，;；、]+")
     private val JM_CONCAT = Regex("(?i)jm\\s*(\\d+)")
+    private val WHITESPACE = Regex("\\s+")
+    private val PURE_ID = Regex("\\d{3,}")
 
     /** Returns the album id (digits only) or null if none can be found. */
     fun parse(text: String): String? {
@@ -32,6 +34,36 @@ object JmIdParser {
         return listOf(text)
     }
 
+    /** Treats a whitespace/newline-separated list as multiple IDs only when every token is an ID. */
+    private fun splitWhitespaceIds(text: String): List<String>? {
+        val raw = text.trim().split(WHITESPACE).filter { it.isNotEmpty() }
+        if (raw.size <= 1) return null
+
+        val merged = mutableListOf<String>()
+        var i = 0
+        while (i < raw.size) {
+            if (raw[i].equals("jm", ignoreCase = true) &&
+                i + 1 < raw.size &&
+                raw[i + 1].matches(PURE_ID)
+            ) {
+                merged += "JM${raw[i + 1]}"
+                i += 2
+            } else {
+                merged += raw[i]
+                i++
+            }
+        }
+        if (merged.size <= 1) return null
+
+        val allIds = merged.all { token ->
+            token.matches(PURE_ID) ||
+                token.matches(JM_PREFIXED) ||
+                URL_PATH.containsMatchIn(token) ||
+                URL_QUERY.containsMatchIn(token)
+        }
+        return if (allIds) merged else null
+    }
+
     /** Splits by comma/semicolon and parses each part.
      *  Also detects concatenated JM IDs like "JM428980JM433633".
      *  If all parts yield valid IDs, returns them as separate entries.
@@ -44,6 +76,11 @@ object JmIdParser {
         val allParts = parts.flatMap { splitConcatenatedJm(it) }
 
         if (allParts.size <= 1) {
+            val whitespaceIds = splitWhitespaceIds(t)
+            if (whitespaceIds != null) {
+                val ids = whitespaceIds.mapNotNull { parse(it) }
+                if (ids.size == whitespaceIds.size) return ids.distinct()
+            }
             return listOfNotNull(parse(t))
         }
 
