@@ -141,6 +141,7 @@ fun SearchScreen(
         isSearching = true
         searchError = null
         if (page == 1) {
+            searchInput = ""
             results = emptyList()
             hasSearched = true
         }
@@ -299,6 +300,17 @@ fun SearchScreen(
                             )
                         },
                         singleLine = true,
+                        trailingIcon = {
+                            if (searchInput.isNotEmpty()) {
+                                IconButton(onClick = { searchInput = "" }) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "清空搜索",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { performSearch(1) }),
                     )

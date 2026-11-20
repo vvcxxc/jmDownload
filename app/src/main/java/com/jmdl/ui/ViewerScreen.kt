@@ -511,6 +511,13 @@ private fun ViewerControls(
                         singleLine = true,
                         label = { Text("页码") },
                         supportingText = { Text("可输入 1 - $maxPage") },
+                        trailingIcon = {
+                            if (jumpText.isNotEmpty()) {
+                                TextButton(onClick = { jumpText = "" }) {
+                                    Text("清空")
+                                }
+                            }
+                        },
                         isError = jumpText.isNotEmpty() && !valid,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Number,
