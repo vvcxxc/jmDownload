@@ -1,0 +1,86 @@
+name: Bug report
+description: Report a reproducible problem with the Android app
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please use the latest APK from Releases and include enough detail to reproduce the problem.
+        Do not upload explicit screenshots; use text/logs and redact sensitive content.
+
+  - type: input
+    id: app_version
+    attributes:
+      label: App version
+      description: Shown in Settings or the APK file name
+      placeholder: v1.0.0 / JMComic-v1.0.0.apk
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Pixel 8, Android 15 / Xiaomi Pad 6, Android 14
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Download / packaging
+        - Multi-chapter task list
+        - Search
+        - Reader
+        - Background / theme
+        - Import / storage
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add JM...
+        2. Select chapter...
+        3. Tap...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Copy from Settings → Logs. Remove private information.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I am using the latest release.
+          required: true
+        - label: I did not include explicit or private images.
+          required: true

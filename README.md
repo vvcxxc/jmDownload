@@ -5,14 +5,33 @@
 <h1 align="center">JM Downloader</h1>
 
 <p align="center">
-  一个跑在 Android 手机上的 JMComic 下载器：输入车号 → 后台下载 → 自动打包 zip → 内置阅读器。
+  <strong>禁漫天堂 / JMComic / 18comic 本子下载器 · Android</strong><br>
+  输入 JM 车号 → 后台下载 → 自动打包 ZIP → 内置离线阅读器。支持多章节按章选择、折叠展开和批量下载。
 </p>
 
 <p align="center">
   <a href="https://github.com/vvcxxc/jmDownload/releases/latest"><img alt="Download APK" src="https://img.shields.io/github/v/release/vvcxxc/jmDownload?label=Download%20APK&logo=android&logoColor=white"></a>
+  <a href="https://github.com/vvcxxc/jmDownload/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/vvcxxc/jmDownload/total?label=downloads"></a>
+  <a href="https://github.com/vvcxxc/jmDownload/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/vvcxxc/jmDownload?style=social"></a>
+  <a href="https://github.com/vvcxxc/jmDownload/forks"><img alt="Forks" src="https://img.shields.io/github/forks/vvcxxc/jmDownload?style=social"></a>
+  <a href="https://github.com/vvcxxc/jmDownload/issues"><img alt="Issues" src="https://img.shields.io/github/issues/vvcxxc/jmDownload"></a>
   <a href="https://github.com/vvcxxc/jmDownload/actions/workflows/android-release.yml"><img alt="Build" src="https://github.com/vvcxxc/jmDownload/actions/workflows/android-release.yml/badge.svg"></a>
   <img alt="Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.0-7F52FF?logo=kotlin&logoColor=white">
+</p>
+
+<p align="center">
+  <a href="https://github.com/vvcxxc/jmDownload/releases/latest"><b>⬇️ 下载 APK</b></a>
+  &nbsp;·&nbsp;
+  <a href="README_EN.md">English README</a>
+  &nbsp;·&nbsp;
+  <a href="#-使用手册">使用手册</a>
+  &nbsp;·&nbsp;
+  <a href="#-常见问题">常见问题</a>
+</p>
+
+<p align="center">
+  ⭐ 如果这个项目对你有帮助，欢迎点一个 <b>Star</b>，让更多人发现它。
 </p>
 
 ## 📥 直接下载 APK
@@ -349,6 +368,24 @@ App 私有目录的 `tasks.json`；卸载 App 会清除。zip 本身在你选择
 - Foreground Service：后台下载
 - 无 Room：任务列表用 `org.json` 持久化，设置用 SharedPreferences
 - R8 + resource shrinking
+
+## ⭐ 支持项目
+
+如果这个项目对你有帮助：
+
+- 点一个 **Star**，这是最直接的支持。
+- 把项目分享给需要的人：
+  - [分享到 X / Twitter](https://twitter.com/intent/tweet?text=JM%20Downloader%20-%20JMComic%20downloader%20for%20Android&url=https%3A%2F%2Fgithub.com%2Fvvcxxc%2FjmDownload)
+  - [分享到 Telegram](https://t.me/share/url?url=https%3A%2F%2Fgithub.com%2Fvvcxxc%2FjmDownload&text=JM%20Downloader%20-%20JMComic%20downloader%20for%20Android)
+  - [分享到 Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2Fvvcxxc%2FjmDownload&title=JM%20Downloader%20-%20Android%20JMComic%20downloader)
+- 遇到问题请按 [Issue 模板](https://github.com/vvcxxc/jmDownload/issues/new/choose) 反馈，附上日志会更快定位。
+- 想参与开发可以阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，欢迎提交 PR。
+
+[![Star History Chart](https://api.star-history.com/svg?repos=vvcxxc/jmDownload&type=Date)](https://star-history.com/#vvcxxc/jmDownload&Date)
+
+## 🔎 相关关键词
+
+禁漫天堂下载器、JMComic 下载器、18comic 下载器、JM 本子下载、Android 漫画下载器、多章节漫画下载、离线漫画阅读器、ZIP 打包、Kotlin、Jetpack Compose。
 
 ## ⚠️ 免责声明
 

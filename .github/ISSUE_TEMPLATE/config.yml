@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Download the latest APK
+    url: https://github.com/vvcxxc/jmDownload/releases/latest
+    about: Check Releases before reporting a problem.
+  - name: Usage guide and FAQ
+    url: https://github.com/vvcxxc/jmDownload#-使用手册
+    about: Read the setup, input rules, multi-chapter behavior and FAQ.
+  - name: English README
+    url: https://github.com/vvcxxc/jmDownload/blob/main/README_EN.md
+    about: English documentation and build instructions.
