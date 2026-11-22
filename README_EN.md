@@ -35,7 +35,7 @@
 - **Background downloads**: foreground service + progress notification; downloads continue while the app is in the background.
 - **ZIP packaging**: each album/chapter is saved as a ZIP file to a folder you choose.
 - **Multi-chapter albums**: choose exactly which chapters to download; group chapters in the task list with expand/collapse and an internal scroll area.
-- **Search**: search by title/author or JM ID, with cover thumbnails, multi-select and batch download.
+- **Search**: search by title/author or JM ID, with cover thumbnails, multi-select and batch download; queued/downloading results show a Cancel button to withdraw unfinished chapters.
 - **Task management**: All / Unread / Downloaded / Downloading / Failed tabs, retry, pause/resume, batch delete and move.
 - **Offline reader**: paged and webtoon modes, thumbnails, page slider, jump-to-page, long-press to save an image, resume reading position.
 - **Local import**: import existing ZIP files from device storage.

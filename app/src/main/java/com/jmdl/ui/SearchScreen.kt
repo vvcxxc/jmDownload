@@ -92,6 +92,24 @@ data class SearchResultItem(
     val chapterCount: Int = 0,
 )
 
+internal data class SearchTaskState(
+    val hasTask: Boolean,
+    val hasActive: Boolean,
+    val hasDone: Boolean,
+    val hasFailed: Boolean,
+)
+
+internal fun searchTaskStateFor(statuses: List<TaskStatus>): SearchTaskState =
+    SearchTaskState(
+        hasTask = statuses.isNotEmpty(),
+        hasActive = statuses.any {
+            it == TaskStatus.QUEUED || it == TaskStatus.RUNNING ||
+                it == TaskStatus.ZIPPING || it == TaskStatus.PAUSED
+        },
+        hasDone = statuses.any { it == TaskStatus.DONE },
+        hasFailed = statuses.any { it == TaskStatus.FAILED },
+    )
+
 @Composable
 fun SearchScreen(
     vm: TaskViewModel,
@@ -116,7 +134,11 @@ fun SearchScreen(
     var totalPages by remember { mutableIntStateOf(1) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     val tasks by vm.tasks.collectAsStateWithLifecycle()
-    val taskStatusById = remember(tasks) { tasks.associate { it.jmId to it.status } }
+    val taskStateById = remember(tasks) {
+        tasks.groupBy { it.jmId }.mapValues { (_, list) ->
+            searchTaskStateFor(list.map { it.status })
+        }
+    }
     val albumSummaries = remember { mutableStateMapOf<String, JmEngine.AlbumSummary>() }
     val albumSummaryGate = remember { Semaphore(3) }
 
@@ -473,7 +495,7 @@ fun SearchScreen(
                         item = item,
                         selectionMode = selectionMode,
                         isSelected = item.id in selectedIds,
-                        existingStatus = taskStatusById[item.id],
+                        taskState = taskStateById[item.id],
                         pageCount = summary?.pageCount ?: item.pageCount,
                         chapterCount = summary?.chapterCount ?: item.chapterCount,
                         isAdding = item.id in addingIds,
@@ -490,8 +512,15 @@ fun SearchScreen(
                             selectionMode = true
                             selectedIds = selectedIds + item.id
                         },
+                        onCancel = {
+                            val cancelled = vm.cancelActiveTasks(item.id)
+                            snackbar(
+                                if (cancelled > 0) "JM${item.id} 已取消未完成章节"
+                                else "JM${item.id} 任务状态已变化"
+                            )
+                        },
                         onDownload = {
-                            val wasFailed = taskStatusById[item.id] == TaskStatus.FAILED
+                            val wasFailed = taskStateById[item.id]?.hasFailed == true
                             AppLogger.i("Single download from search: id=${item.id} wasFailed=$wasFailed")
                             addingIds = addingIds + item.id
                             scope.launch {
@@ -541,7 +570,7 @@ private fun SearchResultRow(
     item: SearchResultItem,
     selectionMode: Boolean,
     isSelected: Boolean,
-    existingStatus: TaskStatus?,
+    taskState: SearchTaskState?,
     pageCount: Int,
     chapterCount: Int,
     isAdding: Boolean,
@@ -550,12 +579,15 @@ private fun SearchResultRow(
     onCopyText: (String) -> Unit,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
+    onCancel: () -> Unit,
     onDownload: () -> Unit,
 ) {
     val context = LocalContext.current
-    val downloaded = existingStatus != null && existingStatus != TaskStatus.FAILED
-    val isFailed = existingStatus == TaskStatus.FAILED
-    val busy = isAdding && !downloaded
+    val hasActive = taskState?.hasActive == true
+    val hasDone = taskState?.hasDone == true
+    val failedOnly = taskState != null && !hasActive && !hasDone && taskState.hasFailed
+    val joined = hasDone && !hasActive
+    val busy = isAdding
     var showPreview by remember(item.id) { mutableStateOf(false) }
 
     LaunchedEffect(item.id, pageCount, chapterCount) {
@@ -674,16 +706,38 @@ private fun SearchResultRow(
             if (!selectionMode) {
                 Button(
                     onClick = {
-                        if (!downloaded && !busy) {
-                            AppLogger.i("Download from search: id=${item.id} title=${item.title} failed=$isFailed")
-                            onDownload()
+                        when {
+                            busy || joined -> Unit
+                            hasActive -> {
+                                AppLogger.i("Cancel from search: id=${item.id} title=${item.title}")
+                                onCancel()
+                            }
+                            else -> {
+                                AppLogger.i("Download from search: id=${item.id} title=${item.title} failed=$failedOnly")
+                                onDownload()
+                            }
                         }
                     },
-                    enabled = !downloaded && !busy,
+                    enabled = !busy && !joined,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (downloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f) else themeColor,
-                        disabledContainerColor = if (busy) themeColor.copy(alpha = 0.55f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        containerColor = when {
+                            hasActive -> MaterialTheme.colorScheme.error
+                            joined -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                            else -> themeColor
+                        },
+                        contentColor = when {
+                            hasActive -> MaterialTheme.colorScheme.onError
+                            joined -> MaterialTheme.colorScheme.onSurfaceVariant
+                            else -> Color.White
+                        },
+                        disabledContainerColor = when {
+                            busy -> themeColor.copy(alpha = 0.55f)
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                        },
+                        disabledContentColor = when {
+                            busy -> Color.White
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     ),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
                     modifier = Modifier
@@ -700,12 +754,22 @@ private fun SearchResultRow(
                             Spacer(Modifier.width(4.dp))
                             Text("加入中…", style = MaterialTheme.typography.labelSmall)
                         }
-                        !downloaded -> {
+                        hasActive -> {
+                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text("取消", style = MaterialTheme.typography.labelSmall)
+                        }
+                        failedOnly -> {
                             Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(2.dp))
-                            Text(if (isFailed) "重试" else "下载", style = MaterialTheme.typography.labelSmall)
+                            Text("重试", style = MaterialTheme.typography.labelSmall)
                         }
-                        else -> Text("已加入", style = MaterialTheme.typography.labelSmall)
+                        joined -> Text("已加入", style = MaterialTheme.typography.labelSmall)
+                        else -> {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text("下载", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }

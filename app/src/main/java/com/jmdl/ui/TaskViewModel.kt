@@ -374,6 +374,31 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
         repo.remove(taskId)
     }
 
+    /**
+     * Cancels and removes all unfinished tasks of one album (queued/running/zipping/paused).
+     * Completed chapters are kept. Returns how many tasks were cancelled.
+     */
+    fun cancelActiveTasks(jmId: String): Int {
+        val active = repo.tasks.value.filter {
+            it.jmId == jmId && it.status in setOf(
+                TaskStatus.QUEUED,
+                TaskStatus.RUNNING,
+                TaskStatus.ZIPPING,
+                TaskStatus.PAUSED,
+            )
+        }
+        active.forEach { task ->
+            if (task.status == TaskStatus.RUNNING || task.status == TaskStatus.ZIPPING) {
+                DownloadService.cancelTask(getApplication(), task.id)
+            }
+            repo.remove(task.id)
+        }
+        if (active.isNotEmpty()) {
+            AppLogger.i("cancel active tasks jmId=$jmId count=${active.size}")
+        }
+        return active.size
+    }
+
     fun pause(taskId: String) {
         repo.pauseTask(taskId)
         AppLogger.i("task paused taskId=$taskId")
