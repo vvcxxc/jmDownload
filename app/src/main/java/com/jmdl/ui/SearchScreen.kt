@@ -1,9 +1,12 @@
 package com.jmdl.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -96,8 +100,11 @@ fun SearchScreen(
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val themeColor = LocalThemeColor.current
+    val context = LocalContext.current
 
     var searchInput by remember { mutableStateOf("") }
+    var lastQuery by remember { mutableStateOf("") }
+    var addingIds by remember { mutableStateOf(setOf<String>()) }
     var searchMode by remember { mutableStateOf(SearchMode.KEYWORD) }
     var isSearching by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
@@ -128,8 +135,15 @@ fun SearchScreen(
         }
     }
 
+    fun copySearchText(text: String) {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("text", text))
+        snackbar("已复制")
+    }
+
     fun performSearch(page: Int = 1) {
-        val query = searchInput.trim()
+        // The input is cleared after a new search, so page 2+ must reuse the last query.
+        val query = if (page == 1) searchInput.trim() else lastQuery
         if (query.isBlank()) return
         if (searchMode == SearchMode.JM_ID && !query.all { it.isDigit() }) {
             searchError = "JM号必须为纯数字"
@@ -137,6 +151,7 @@ fun SearchScreen(
             results = emptyList()
             return
         }
+        lastQuery = query
         focus.clearFocus()
         isSearching = true
         searchError = null
@@ -248,6 +263,7 @@ fun SearchScreen(
                             results = emptyList()
                             searchError = null
                             hasSearched = false
+                            lastQuery = ""
                             selectionMode = false
                             selectedIds = emptySet()
                         },
@@ -264,6 +280,7 @@ fun SearchScreen(
                             results = emptyList()
                             searchError = null
                             hasSearched = false
+                            lastQuery = ""
                             selectionMode = false
                             selectedIds = emptySet()
                         },
@@ -371,25 +388,31 @@ fun SearchScreen(
                         Button(
                             onClick = {
                                 val toAdd = results.filter { it.id in selectedIds && it.title != null }
-                                AppLogger.i("Batch download: ${toAdd.size} items selected, ids=${toAdd.map { it.id }}")
+                                val ids = toAdd.map { it.id }.toSet()
+                                AppLogger.i("Batch download: ${toAdd.size} items selected, ids=$ids")
+                                addingIds = addingIds + ids
                                 scope.launch {
-                                    var added = 0
-                                    var skipped = 0
-                                    toAdd.forEach { item ->
-                                        val err = vm.addTask(item.id)
-                                        if (err == null) { added++; AppLogger.i("  added: id=${item.id}") }
-                                        else { skipped++; AppLogger.w("  skip: id=${item.id} err=$err") }
-                                    }
-                                    val msg = buildString {
-                                        if (added > 0) append("已加入 $added 个到下载列表")
-                                        if (skipped > 0) {
-                                            if (added > 0) append("，")
-                                            append("$skipped 个已在列表中")
+                                    try {
+                                        var added = 0
+                                        var skipped = 0
+                                        toAdd.forEach { item ->
+                                            val err = vm.addTask(item.id)
+                                            if (err == null) { added++; AppLogger.i("  added: id=${item.id}") }
+                                            else { skipped++; AppLogger.w("  skip: id=${item.id} err=$err") }
                                         }
+                                        val msg = buildString {
+                                            if (added > 0) append("已加入 $added 个到下载列表")
+                                            if (skipped > 0) {
+                                                if (added > 0) append("，")
+                                                append("$skipped 个已在列表中")
+                                            }
+                                        }
+                                        if (msg.isNotEmpty()) snackbar(msg)
+                                        selectionMode = false
+                                        selectedIds = emptySet()
+                                    } finally {
+                                        addingIds = addingIds - ids
                                     }
-                                    if (msg.isNotEmpty()) snackbar(msg)
-                                    selectionMode = false
-                                    selectedIds = emptySet()
                                 }
                             },
                             enabled = selectedIds.isNotEmpty(),
@@ -450,8 +473,10 @@ fun SearchScreen(
                         existingStatus = taskStatusById[item.id],
                         pageCount = summary?.pageCount ?: item.pageCount,
                         chapterCount = summary?.chapterCount ?: item.chapterCount,
+                        isAdding = item.id in addingIds,
                         themeColor = themeColor,
                         onRequestAlbumSummary = { requestAlbumSummary(item) },
+                        onCopyText = ::copySearchText,
                         onToggleSelect = {
                             selectedIds = if (item.id in selectedIds)
                                 selectedIds - item.id
@@ -465,13 +490,18 @@ fun SearchScreen(
                         onDownload = {
                             val wasFailed = taskStatusById[item.id] == TaskStatus.FAILED
                             AppLogger.i("Single download from search: id=${item.id} wasFailed=$wasFailed")
+                            addingIds = addingIds + item.id
                             scope.launch {
-                                val err: String? = vm.addTask(item.id)
-                                if (err == null) {
-                                    snackbar(if (wasFailed) "JM${item.id} 已重新加入下载列表" else "JM${item.id} 已加入下载列表")
-                                } else {
-                                    AppLogger.w("Single download failed: id=${item.id} err=$err")
-                                    snackbar(err)
+                                try {
+                                    val err: String? = vm.addTask(item.id)
+                                    if (err == null) {
+                                        snackbar(if (wasFailed) "JM${item.id} 已重新加入下载列表" else "JM${item.id} 已加入下载列表")
+                                    } else {
+                                        AppLogger.w("Single download failed: id=${item.id} err=$err")
+                                        snackbar(err)
+                                    }
+                                } finally {
+                                    addingIds = addingIds - item.id
                                 }
                             }
                         }
@@ -511,8 +541,10 @@ private fun SearchResultRow(
     existingStatus: TaskStatus?,
     pageCount: Int,
     chapterCount: Int,
+    isAdding: Boolean,
     themeColor: Color,
     onRequestAlbumSummary: () -> Unit,
+    onCopyText: (String) -> Unit,
     onToggleSelect: () -> Unit,
     onEnterSelect: () -> Unit,
     onDownload: () -> Unit,
@@ -520,6 +552,7 @@ private fun SearchResultRow(
     val context = LocalContext.current
     val downloaded = existingStatus != null && existingStatus != TaskStatus.FAILED
     val isFailed = existingStatus == TaskStatus.FAILED
+    val busy = isAdding && !downloaded
     var showPreview by remember(item.id) { mutableStateOf(false) }
 
     LaunchedEffect(item.id, pageCount, chapterCount) {
@@ -571,11 +604,15 @@ private fun SearchResultRow(
                         item.id.all { it.isDigit() } -> "JM${item.id} ${item.title}"
                         else -> "${item.title} · ${item.id}"
                     }
+                    val copyTitle = item.title?.takeIf { it.isNotBlank() } ?: "JM${item.id}"
                     Text(
                         text = displayTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.pointerInput(copyTitle) {
+                            detectTapGestures(onLongPress = { onCopyText(copyTitle) })
+                        },
                     )
 
                     if (!item.authors.isNullOrEmpty()) {
@@ -590,6 +627,9 @@ private fun SearchResultRow(
                                             color = themeColor.copy(alpha = 0.1f),
                                             shape = RoundedCornerShape(4.dp)
                                         )
+                                        .pointerInput(author) {
+                                            detectTapGestures(onLongPress = { onCopyText(author) })
+                                        }
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
@@ -631,15 +671,15 @@ private fun SearchResultRow(
             if (!selectionMode) {
                 Button(
                     onClick = {
-                        if (!downloaded) {
+                        if (!downloaded && !busy) {
                             AppLogger.i("Download from search: id=${item.id} title=${item.title} failed=$isFailed")
                             onDownload()
                         }
                     },
-                    enabled = !downloaded,
+                    enabled = !downloaded && !busy,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (downloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f) else themeColor,
-                        disabledContainerColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                        disabledContainerColor = if (busy) themeColor.copy(alpha = 0.55f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
                         disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
@@ -647,18 +687,23 @@ private fun SearchResultRow(
                         .align(Alignment.BottomEnd)
                         .padding(end = 12.dp, bottom = 8.dp),
                 ) {
-                    if (!downloaded) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(2.dp))
+                    when {
+                        busy -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("加入中…", style = MaterialTheme.typography.labelSmall)
+                        }
+                        !downloaded -> {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text(if (isFailed) "重试" else "下载", style = MaterialTheme.typography.labelSmall)
+                        }
+                        else -> Text("已加入", style = MaterialTheme.typography.labelSmall)
                     }
-                    Text(
-                        when {
-                            downloaded -> "已加入"
-                            isFailed -> "重试"
-                            else -> "下载"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                    )
                 }
             }
         }
