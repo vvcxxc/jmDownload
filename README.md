@@ -28,6 +28,8 @@
   <a href="#-使用手册">使用手册</a>
   &nbsp;·&nbsp;
   <a href="#-常见问题">常见问题</a>
+  &nbsp;·&nbsp;
+  <a href="CHANGELOG.md">更新记录</a>
 </p>
 
 <p align="center">
