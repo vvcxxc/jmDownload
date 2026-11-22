@@ -30,8 +30,8 @@ android {
         applicationId = "com.jmdl"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.1"
+        versionCode = 4
+        versionName = "1.1.2"
         // minSdk 26 has native multidex; the flag is unnecessary.
     }
 
