@@ -142,7 +142,7 @@ fun SearchScreen(
     }
 
     fun performSearch(page: Int = 1) {
-        // The input is cleared after a new search, so page 2+ must reuse the last query.
+        // The input is cleared after results arrive, so page 2+ must reuse the last query.
         val query = if (page == 1) searchInput.trim() else lastQuery
         if (query.isBlank()) return
         if (searchMode == SearchMode.JM_ID && !query.all { it.isDigit() }) {
@@ -156,7 +156,6 @@ fun SearchScreen(
         isSearching = true
         searchError = null
         if (page == 1) {
-            searchInput = ""
             results = emptyList()
             hasSearched = true
         }
@@ -200,6 +199,7 @@ fun SearchScreen(
                                 results = listOf(item)
                                 currentPage = 1
                                 totalPages = 1
+                                if (searchInput.trim() == query) searchInput = ""
                             }
                         }
                         SearchMode.KEYWORD -> {
@@ -221,6 +221,9 @@ fun SearchScreen(
                                 results = if (pageResult.currentPage == 1) items else results + items
                                 currentPage = pageResult.currentPage
                                 totalPages = pageResult.totalPages
+                                if (page == 1 && items.isNotEmpty() && searchInput.trim() == query) {
+                                    searchInput = ""
+                                }
                             }
                         }
                     }
